@@ -1,0 +1,32 @@
+repos:
+  # Use the black already on PATH (the conda env's) rather than letting
+  # pre-commit install its own mypyc-compiled build, which this machine's
+  # Application Control policy blocks. Requires the strideo env active on commit.
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: black
+        language: system
+        types: [python]
+        exclude: ^docs/
+        require_serial: true
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.1.2
+    hooks:
+      - id: flake8
+        additional_dependencies: [flake8-pyproject>=1.2.0]
+        exclude: ^docs/
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - pydantic>=2.0.0
+          - numpy>=1.24.0
+          - types-pyyaml
+          - pytest>=8.0.0
+        pass_filenames: false
+        args: [--config-file=pyproject.toml, src/, tests/]
