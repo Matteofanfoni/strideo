@@ -13,7 +13,7 @@ pinned: false
 Running biomechanics analysis from a smartphone video.
 Point your phone at a runner, upload the clip, and get four core metrics in seconds.
 
-Live demo → Hugging Face Spaces (coming soon)
+**[Live demo → Hugging Face Spaces](https://huggingface.co/spaces/fanfonim/strideo)**
 
 ---
 
