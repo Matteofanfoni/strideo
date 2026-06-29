@@ -1,15 +1,13 @@
 FROM python:3.11-slim
 
 # System dependencies:
-#   ffmpeg        — video decoding
-#   wget          — model weight download at build time
-#   libgles2      — OpenGL ES runtime required by MediaPipe
-#   libegl1       — EGL platform library required by MediaPipe
-#   xvfb          — virtual framebuffer so MediaPipe can initialise its GL
-#                   context in the headless container (no real display)
+#   ffmpeg    — video decoding
+#   wget      — model weight download at build time
+#   libgles2  — OpenGL ES runtime required by MediaPipe (headless)
+#   libegl1   — EGL platform library required by MediaPipe (headless)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg wget libgles2 libegl1 xvfb xauth && \
+        ffmpeg wget libgles2 libegl1 && \
     rm -rf /var/lib/apt/lists/*
 
 # HF Spaces requires the app to run as UID 1000
@@ -42,8 +40,5 @@ Wholebody(mode='performance', to_openpose=False, backend='onnxruntime', device='
 
 EXPOSE 7860
 
-# xvfb-run provides a virtual framebuffer so MediaPipe's EGL context
-# initialises correctly in the headless container.
-CMD ["xvfb-run", "-a", "--server-args=-screen 0 1024x768x24", \
-     "streamlit", "run", "app/app.py", \
+CMD ["streamlit", "run", "app/app.py", \
      "--server.port=7860", "--server.address=0.0.0.0"]
