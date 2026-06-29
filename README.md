@@ -3,9 +3,8 @@ title: Strideo
 emoji: 🏃
 colorFrom: teal
 colorTo: blue
-sdk: streamlit
-sdk_version: "1.35.0"
-app_file: app/app.py
+sdk: docker
+app_port: 7860
 pinned: false
 ---
 
