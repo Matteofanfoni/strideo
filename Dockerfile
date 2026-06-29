@@ -1,8 +1,13 @@
 FROM python:3.11-slim
 
-# System dependencies: ffmpeg for video decoding, wget for model download
+# System dependencies:
+#   ffmpeg        — video decoding
+#   wget          — model weight download at build time
+#   libgles2      — OpenGL ES runtime required by MediaPipe (headless)
+#   libegl1       — EGL platform library required by MediaPipe (headless)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg wget && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg wget libgles2 libegl1 && \
     rm -rf /var/lib/apt/lists/*
 
 # HF Spaces requires the app to run as UID 1000
