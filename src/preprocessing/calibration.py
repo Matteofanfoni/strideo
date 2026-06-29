@@ -157,6 +157,7 @@ def measure_body_segments(
     near_side: str,
     shoe_sole_cm: float = 2.5,
     min_visibility: float = 0.5,
+    min_samples: int = 10,
 ) -> Tuple[SegmentMeasurements, Dict[str, List[float]], Dict]:
     """
     Measure body segments using near-side landmarks only.
@@ -260,8 +261,6 @@ def measure_body_segments(
             diagnostics["frames_with_full_body"] += 1  # type: ignore[operator]
 
     # Compute medians
-    min_samples = 10
-
     shank_px = (
         np.median(shank_measurements)
         if len(shank_measurements) >= min_samples
@@ -408,6 +407,8 @@ def create_spatial_calibration(
     runner_height_cm: float,
     shoe_sole_cm: float = 2.5,
     shoe_type: Optional[str] = None,
+    min_visibility: float = 0.5,
+    min_samples: int = 10,
 ) -> SpatialCalibration:
     """
     Create spatial calibration from pose landmarks and known runner height.
@@ -450,7 +451,12 @@ def create_spatial_calibration(
 
     # Step 2: Measure body segments
     segments, all_measurements, measure_diag = measure_body_segments(
-        landmarks, visibilities, near_side, shoe_sole_cm
+        landmarks,
+        visibilities,
+        near_side,
+        shoe_sole_cm,
+        min_visibility=min_visibility,
+        min_samples=min_samples,
     )
 
     # Check for missing segments

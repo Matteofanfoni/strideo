@@ -511,9 +511,20 @@ def extract_all_metrics(
         BiomechanicalMetrics object with all metrics
     """
     # Create spatial calibration (no ground contact dependency)
-    calibration = create_spatial_calibration(
-        landmarks, visibilities, runner_height_cm, shoe_sole_cm, shoe_type
-    )
+    try:
+        calibration = create_spatial_calibration(
+            landmarks, visibilities, runner_height_cm, shoe_sole_cm, shoe_type
+        )
+    except ValueError:
+        calibration = create_spatial_calibration(
+            landmarks,
+            visibilities,
+            runner_height_cm,
+            shoe_sole_cm,
+            shoe_type,
+            min_visibility=0.35,
+            min_samples=5,
+        )
 
     # Detect ground contacts using two-pass coarse/fine method
     contacts, contact_summary = detect_ground_contacts(
