@@ -577,7 +577,7 @@ def extract_pose_landmarks_streaming_reverse(
         pose_estimator = create_pose_estimator(
             num_poses=1,
             running_mode="video",
-            min_pose_detection_confidence=0.5,
+            min_pose_detection_confidence=0.2,
         )
 
     # Reverse-feed buffers: index t in feed order = source-frame index (T-1-t).

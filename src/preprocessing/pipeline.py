@@ -299,13 +299,16 @@ def run_clip_pipeline(
     _emit("Preparing video", 0.02)
     cfr_path, _ = ensure_cfr(video_path)
 
-    # 1. Forward pose pass (v1.0 config: VIDEO + num_poses=1 + det_conf=0.5)
+    # 1. Forward pose pass — det_conf=0.2 matches the seeded pass and maximises
+    # recall in headless CPU environments (e.g. HF Spaces) where the decoder
+    # produces slightly different pixel values, pushing marginal detections
+    # below the original 0.5 threshold.
     _emit("Pose estimation (forward)", 0.05)
     pose_result, video_meta = extract_pose_landmarks_streaming(
         cfr_path,
         num_poses=1,
         running_mode="video",
-        min_pose_detection_confidence=0.5,
+        min_pose_detection_confidence=0.2,
     )
     fps = video_meta["effective_fps"]
     res_h = video_meta["height"]
