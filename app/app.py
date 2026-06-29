@@ -8,7 +8,7 @@ app_dir = Path(__file__).parent
 if str(app_dir) not in sys.path:
     sys.path.insert(0, str(app_dir))
 
-import preload  # noqa: F401
+import preload  # noqa: F401, E402
 from ui.styles import inject_shared_styles, inject_page_css, render_navbar  # noqa: E402
 
 st.set_page_config(page_title="strideo.it", page_icon="🏃", layout="wide")
