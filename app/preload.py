@@ -53,6 +53,11 @@ def _clean_stale_sessions(max_age_hours: float = 4.0) -> None:
 
 def _download_mediapipe() -> None:
     if _TASK_PATH.exists():
+        size_mb = _TASK_PATH.stat().st_size / 1_048_576
+        print(
+            f"[preload] MediaPipe task file ready: {_TASK_PATH} ({size_mb:.1f} MB)",
+            flush=True,
+        )
         return
     print(f"[preload] downloading MediaPipe weights → {_TASK_PATH}", flush=True)
     try:

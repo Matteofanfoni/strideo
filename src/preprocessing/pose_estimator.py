@@ -62,6 +62,7 @@ def create_pose_estimator(
     options = mp.tasks.vision.PoseLandmarkerOptions(
         base_options=mp.tasks.BaseOptions(
             model_asset_path=str(model_path),
+            delegate=mp.tasks.BaseOptions.Delegate.CPU,
         ),
         running_mode=mode_map[running_mode],
         num_poses=num_poses,
@@ -243,6 +244,11 @@ def extract_pose_landmarks(
             total_candidates / detection_count if detection_count > 0 else 0
         ),
     }
+    print(
+        f"[pose] detection_rate={quality_metrics['detection_rate']:.2%}"
+        f" ({detection_count}/{T} frames)",
+        flush=True,
+    )
 
     return PoseExtractionResult(
         landmarks=landmarks,
@@ -453,6 +459,11 @@ def extract_pose_landmarks_streaming(
             total_candidates / detection_count if detection_count > 0 else 0
         ),
     }
+    print(
+        f"[pose] detection_rate={quality_metrics['detection_rate']:.2%}"
+        f" ({detection_count}/{T} frames)",
+        flush=True,
+    )
 
     video_meta = {
         "source_path": video_path,

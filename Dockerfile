@@ -14,6 +14,8 @@ RUN apt-get update && \
 RUN useradd -m -u 1000 user
 USER user
 ENV PATH=/home/user/.local/bin:$PATH
+# Force MediaPipe to use CPU delegate — GPU delegate fails silently in headless Docker
+ENV MEDIAPIPE_DISABLE_GPU=1
 
 WORKDIR /home/user/app
 
@@ -29,7 +31,8 @@ COPY --chown=user . .
 # Baking it into the image avoids a download stall on every cold start.
 RUN mkdir -p models && \
     wget -q -O models/pose_landmarker_heavy.task \
-    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task" && \
+    ls -lh models/pose_landmarker_heavy.task
 
 # Warm RTMPose-x ONNX — rtmlib auto-downloads the model (~300 MB) on first
 # instantiation; baking it here puts it in the image layer so users never
