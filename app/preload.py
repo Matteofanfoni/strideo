@@ -30,6 +30,29 @@ _MODELS_DIR = Path(__file__).parent.parent / "models"
 _TASK_PATH = _MODELS_DIR / "pose_landmarker_heavy.task"
 
 
+def _log_env_versions() -> None:
+    """Print key inference-library versions so the deployed environment can be
+    compared against the validated local one (BlazePose detection rate is
+    sensitive to the MediaPipe wheel build, which differs per-version and
+    per-platform)."""
+    try:
+        import cv2
+        import mediapipe
+        import numpy
+        import onnxruntime
+
+        print(
+            "[preload] env versions: "
+            f"mediapipe={mediapipe.__version__} "
+            f"numpy={numpy.__version__} "
+            f"opencv={cv2.__version__} "
+            f"onnxruntime={onnxruntime.__version__}",
+            flush=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[preload] WARNING: version probe failed: {exc}", flush=True)
+
+
 def _clean_stale_sessions(max_age_hours: float = 4.0) -> None:
     """Remove per-session upload dirs older than max_age_hours.
 
@@ -92,6 +115,7 @@ def _warm_rtmpose() -> None:
         )
 
 
+_log_env_versions()
 _clean_stale_sessions()
 _download_mediapipe()
 _warm_rtmpose()
