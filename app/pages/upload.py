@@ -545,7 +545,7 @@ if analyze_clicked and num_uploaded > 0:
     from src.preprocessing.nn_preprocessing import preprocess_for_nn
 
     st.markdown(
-        '<div class="prediction-box"><p class="up-note">Analysis runs on CPU: roughly 8-12 minutes per clip '
+        '<div class="prediction-box"><p class="up-note">Analysis runs on CPU: roughly 4-5 minutes per clip '
         "on Hugging Face Spaces (RTMPose-x pose estimation is the slow step). "
         "Please keep this tab open.</p></div>",
         unsafe_allow_html=True,
