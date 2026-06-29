@@ -319,26 +319,27 @@ def run_clip_pipeline(
         pose_result_rev, _ = extract_pose_landmarks_streaming_reverse(cfr_path)
 
     # 3. Bootstrap calibration + body height (px) for downstream gates
-    # CPU MediaPipe produces lower visibility scores than GPU; retry with
-    # permissive thresholds so the pipeline works on HF Spaces / CPU-only.
+    # In a headless Docker environment MediaPipe's EGL context may degrade,
+    # producing near-zero visibility scores. Retry progressively: strict →
+    # permissive → geometry-only (ignore visibility entirely).
+    _cal_args = (
+        pose_result.landmarks,
+        pose_result.visibilities,
+        runner_height_cm,
+        shoe_sole_cm,
+        shoe_type,
+    )
     try:
-        bootstrap_cal = create_spatial_calibration(
-            pose_result.landmarks,
-            pose_result.visibilities,
-            runner_height_cm,
-            shoe_sole_cm,
-            shoe_type,
-        )
+        bootstrap_cal = create_spatial_calibration(*_cal_args)
     except ValueError:
-        bootstrap_cal = create_spatial_calibration(
-            pose_result.landmarks,
-            pose_result.visibilities,
-            runner_height_cm,
-            shoe_sole_cm,
-            shoe_type,
-            min_visibility=0.35,
-            min_samples=5,
-        )
+        try:
+            bootstrap_cal = create_spatial_calibration(
+                *_cal_args, min_visibility=0.35, min_samples=5
+            )
+        except ValueError:
+            bootstrap_cal = create_spatial_calibration(
+                *_cal_args, min_visibility=0.0, min_samples=3
+            )
     body_height_cm = float(runner_height_cm) + float(shoe_sole_cm)
     body_height_px = body_height_cm * float(bootstrap_cal.pixels_per_cm)
 
@@ -534,24 +535,24 @@ def run_clip_pipeline(
     # 10. Metrics (contacts + biomechanics), mirroring compute_metrics_on_window
     _emit("Extracting metrics", 0.85)
     prune_active = prune_spurious_contacts and estimated_velocity_ms is not None
+    _fin_cal_args = (
+        selected_landmarks,
+        selected_visibilities,
+        runner_height_cm,
+        shoe_sole_cm,
+        shoe_type,
+    )
     try:
-        calibration = create_spatial_calibration(
-            selected_landmarks,
-            selected_visibilities,
-            runner_height_cm,
-            shoe_sole_cm,
-            shoe_type,
-        )
+        calibration = create_spatial_calibration(*_fin_cal_args)
     except ValueError:
-        calibration = create_spatial_calibration(
-            selected_landmarks,
-            selected_visibilities,
-            runner_height_cm,
-            shoe_sole_cm,
-            shoe_type,
-            min_visibility=0.35,
-            min_samples=5,
-        )
+        try:
+            calibration = create_spatial_calibration(
+                *_fin_cal_args, min_visibility=0.35, min_samples=5
+            )
+        except ValueError:
+            calibration = create_spatial_calibration(
+                *_fin_cal_args, min_visibility=0.0, min_samples=3
+            )
     contacts, _ = detect_ground_contacts(
         selected_landmarks,
         selected_visibilities,
