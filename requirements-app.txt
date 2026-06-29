@@ -9,7 +9,12 @@
 numpy>=1.24.0
 scipy>=1.11.0
 opencv-python-headless>=4.8.0   # headless: no libGL/GUI deps on a server container
-mediapipe>=0.10.0               # BlazePose (33 landmarks)
+mediapipe==0.10.32              # BlazePose (33 landmarks) — PINNED to the
+                                # validated local version. HF previously
+                                # resolved 0.10.35, which coincided with a
+                                # detection-rate drop (~60%→19%) on the same
+                                # clip in headless Linux. Do not unpin without
+                                # re-validating detection on HF Spaces.
 onnxruntime>=1.17.0             # CPU build — RTMPose-x backend (NOT onnxruntime-gpu)
 rtmlib>=0.0.15                  # thin RTMPose wrapper (pure-python, 61 KB)
 pydantic>=2.0.0                 # metadata models
