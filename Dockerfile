@@ -9,7 +9,7 @@ FROM python:3.11-slim
 #                   context in the headless container (no real display)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg wget libgles2 libegl1 xvfb && \
+        ffmpeg wget libgles2 libegl1 xvfb xauth && \
     rm -rf /var/lib/apt/lists/*
 
 # HF Spaces requires the app to run as UID 1000
