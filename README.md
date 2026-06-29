@@ -1,3 +1,14 @@
+---
+title: Strideo
+emoji: 🏃
+colorFrom: teal
+colorTo: blue
+sdk: streamlit
+sdk_version: "1.35.0"
+app_file: app/app.py
+pinned: false
+---
+
 # Strideo
 
 Running biomechanics analysis from a smartphone video.
