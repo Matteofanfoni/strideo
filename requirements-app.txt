@@ -1,0 +1,34 @@
+# Strideo app dependencies — classical extraction pipeline, CPU-only.
+# No GPU or PyTorch required for the app.
+#
+# Model weights are NOT pip-installable:
+#   * MediaPipe .task files  -> models/ directory (see README for download)
+#   * RTMPose-x ONNX         -> downloaded automatically to ~/.cache on first run
+
+# Core pipeline
+numpy>=1.24.0
+scipy>=1.11.0
+opencv-python-headless>=4.8.0   # headless: no libGL/GUI deps on a server container
+mediapipe==0.10.32              # BlazePose (33 landmarks) — PINNED to the
+                                # validated local version. HF previously
+                                # resolved 0.10.35, which coincided with a
+                                # detection-rate drop (~60%→19%) on the same
+                                # clip in headless Linux. Do not unpin without
+                                # re-validating detection on HF Spaces.
+onnxruntime>=1.17.0             # CPU build — RTMPose-x backend (NOT onnxruntime-gpu)
+rtmlib>=0.0.15                  # thin RTMPose wrapper (pure-python, 61 KB)
+pydantic>=2.0.0                 # metadata models
+requests>=2.31.0                # contact form POST + reCAPTCHA siteverify call
+
+# Web UI + reporting
+streamlit==1.54.0                # PINNED: st.components.v2 (reCAPTCHA widget)
+                                 # has had breaking signature changes across
+                                 # 2025->2026 releases; pin to the version this
+                                 # was built and tested against, same rationale
+                                 # as the mediapipe pin above.
+plotly>=6.0.0                   # StrideoNet-vs-DKE metric charts + Pace
+                                 # Analysis (results.py) — a speculative add
+                                 # until DKE-MC1/RP-PA1 gave it real
+                                 # consumers 2026-08-27/28; confirmed kept,
+                                 # not orphaned (ARCH-c, D197)
+reportlab>=4.0.0

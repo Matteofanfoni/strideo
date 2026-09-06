@@ -1,0 +1,41 @@
+[server]
+enableXsrfProtection = false
+enableCORS = false
+maxUploadSize = 500
+
+[browser]
+gatherUsageStats = false
+
+# Fixes the "ghost menu" flash on first load: without this, the frontend
+# renders Streamlit's own default sidebar page-nav list immediately on
+# connect, before the script runs and our CSS (see [theme.sidebar] below)
+# gets a chance to hide it - visible for a second or two on a slow
+# connection or a cold HF Space start. This tells the frontend not to render
+# it at all (sent in the initial session config, before any script executes),
+# fixing the flash at its source instead of hiding it after paint.
+[client]
+showSidebarNavigation = false
+
+# The design system in app/ui/styles.py is light-only. Without base="light",
+# Streamlit follows the visitor's OS/browser preference and renders its own
+# chrome dark under our light CSS. primaryColor drives the widget accents CSS
+# cannot reach (slider track and handle, focus rings, spinners) - keep it equal
+# to --brand in styles.py.
+[theme]
+base = "light"
+primaryColor = "#299A8B"
+
+# The sidebar's own page-nav list is suppressed at the source by
+# client.showSidebarNavigation above; app/ui/styles.py's CSS still hides
+# [data-testid="stSidebar"] outright as a belt-and-braces fallback (e.g. if a
+# future page ever calls st.sidebar directly). Declaring a [theme] at all
+# makes Streamlit 1.54 derive a sidebar palette and log "Invalid color passed
+# for … in theme.sidebar" warnings for the entries it cannot fill. Setting
+# textColor here silences one of them; widgetBackgroundColor /
+# widgetBorderColor / skeletonBackgroundColor are derived internally and are
+# NOT config options, so a few such warnings per render remain. They are
+# devtools-only noise with the sidebar hidden.
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#ECF1F5"
+textColor = "#101827"

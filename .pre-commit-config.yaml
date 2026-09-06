@@ -1,0 +1,35 @@
+repos:
+  # Run black AND mypy from the conda env already on PATH rather than letting
+  # pre-commit install its own mypyc-compiled builds, which this machine's
+  # Application Control policy blocks ([WinError 4551]). Requires the strideo
+  # env active on commit. black was moved here by c3d8a7d; mypy was left on the
+  # remote mirror and kept failing the same way until 2026-08-05.
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: black
+        language: system
+        types: [python]
+        exclude: ^docs/
+        require_serial: true
+
+      - id: mypy
+        name: mypy
+        entry: mypy
+        language: system
+        pass_filenames: false
+        args: [--config-file=pyproject.toml, src/, tests/]
+        types: [python]
+        require_serial: true
+
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.1.2
+    hooks:
+      - id: flake8
+        additional_dependencies: [flake8-pyproject>=1.2.0]
+        exclude: ^docs/
+
+  # mypy intentionally NOT from mirrors-mypy — see the local hook above. Its
+  # additional_dependencies (pydantic, numpy, types-pyyaml, pytest) are already
+  # present in the strideo env, so the system hook resolves the same stubs.

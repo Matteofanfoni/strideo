@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Media / data (never committed)
+uploads/
+data/
+*.mp4
+*.mov
+*.avi
+*.pkl
+
+# Models / weights — strideo_final.onnx (~1.1 MB) is the one exception,
+# committed via LFS below; the raw .pt checkpoint and MediaPipe .task files
+# stay out (the app never loads them; .task is fetched at Docker build time).
+models/*
+!models/strideo_final.onnx
+*.task
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
