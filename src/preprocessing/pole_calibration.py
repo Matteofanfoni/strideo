@@ -6,10 +6,9 @@ pooled Kinovea pole average or the anthropometric self-calibration) silently
 over/under-estimates measurements taken near the frame edges, where perspective
 makes pixels-per-metre non-uniform across the visible track.
 
-See ~/.claude/plans/idempotent-foraging-hippo.md for the full design and the
-critical-correctness note on the correction's sign (this module only exposes
-local ratios; applying the sign-sensitive correction itself is a downstream
-concern, e.g. `SpatialCalibration.px_to_m`).
+The correction's sign is the critical-correctness point: this module only
+exposes local ratios, and applying the sign-sensitive correction itself is a
+downstream concern, e.g. `SpatialCalibration.px_to_m`.
 """
 
 from dataclasses import dataclass

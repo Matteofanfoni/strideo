@@ -188,8 +188,7 @@ def _vo_k(v_kmh: float) -> float:
 # on it" -- and names the reason: S1's women are unadjusted while S2's men are
 # 0.93-adjusted, so the only comparison available is confounded by exactly the
 # adjustment this module undoes. With the men's values undone the two
-# speed-matched comparisons agree at -10.0% and -9.6% (see
-# `scripts/analysis/c83_band_rederivation.py::sex_offset_derivation`), landing
+# speed-matched comparisons agree at -10.0% and -9.6%, landing
 # on section 9's own stated lower bound. Same evidential standard as the
 # flight-time 0.87 offset that section already ships, which rests on the same
 # two comparisons.
@@ -287,8 +286,7 @@ _SD: Dict[str, float] = {k: median(v for v, _ in ev) for k, ev in _SD_EVIDENCE.i
 _SD_MULTIPLE = 2.0
 
 # The floor, in relative width (band width / band midpoint). 0.101 is the
-# median relative width of the original measured bands, measured by
-# `scripts/analysis/c83_elite_band_width_audit.py`.
+# median relative width of the original measured bands.
 _MIN_RELATIVE_WIDTH = 0.101
 
 
@@ -395,8 +393,8 @@ def _tier_table(pace_level: str, sex: str, height_cm: float) -> Dict[str, EliteR
 
 # The published tables, derived from the model over each tier's speed span at
 # the default statures. Computed rather than transcribed so that this module,
-# `08_app_streamlit.md` section 5.3 and the research doc cannot drift apart --
-# the drift defect the research doc's own section 10 was written against.
+# its documentation and the research it is drawn from cannot drift apart --
+# the drift defect that documentation was written against.
 _TIERS: Dict[str, Dict[str, Dict[str, EliteRange]]] = {
     tier: {
         sex: _tier_table(tier, sex, _DEFAULT_HEIGHT_CM[sex])

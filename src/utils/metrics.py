@@ -190,7 +190,7 @@ def calculate_duty_factor(gct_ms: float, flight_time_ms: float) -> float:
     the standard value, and this docstring wrongly asserted that step time was
     "the standard biomechanics definition". All 30 published observations
     behind the elite reference ranges use the stride
-    denominator, verified in `scripts/analysis/c82_duty_factor_definition_audit.py`,
+    denominator, verified by audit rather than assumed,
     so the app's elite-range comparison had been scoring every runner against a
     band on half its scale since 2026-08-28. The old value is still available
     as `flight_ratio`'s complement, which is a per-step quantity by design.

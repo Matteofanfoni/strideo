@@ -1,6 +1,6 @@
 """Video metadata schema and dataset lookup utilities.
 
-Implements the metadata schema from the data collection protocol (§11.3)
+Implements the metadata schema from the data collection protocol
 using Pydantic models. Provides loading, saving, and lookup by video_id
 so the pipeline can resolve runner/capture info automatically.
 
@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-# ── Schema models (§11.3) ──────────────────────────────────────────────
+# ── Schema models ──────────────────────────────────────────────
 
 
 class FilesPaths(BaseModel):
@@ -74,7 +74,7 @@ class QualityInfo(BaseModel):
 
 
 class VideoMetadata(BaseModel):
-    """Complete metadata for a single video, matching §11.3 schema."""
+    """Complete metadata for a single video, matching the protocol schema."""
 
     video_id: str
     protocol_version: str = "1.5"
@@ -349,11 +349,11 @@ class MetadataStore:
         return video_id in self._index
 
 
-# ── Runner database (§11.4) ──────────────────────────────────────────
+# ── Runner database ──────────────────────────────────────────
 
 
 class Runner(BaseModel):
-    """Single runner entry matching §11.4 schema."""
+    """Single runner entry matching the protocol schema."""
 
     id: str
     name: str
@@ -378,7 +378,7 @@ class RunnerDatabase:
     """
     In-memory index of all runners in the study.
 
-    Loads the runner database JSON (§11.4) and indexes by runner ID
+    Loads the runner database JSON and indexes by runner ID
     for lookup when creating per-video metadata.
 
     Args:

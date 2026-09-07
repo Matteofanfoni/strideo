@@ -106,7 +106,7 @@ class ShoeType:
 #
 # DO NOT "correct" THESE UPWARDS.
 # Several of these sit below the real-world stack ranges the collection
-# protocol itself publishes (01_data_collection_protocol.md s2.3: track spikes
+# protocol itself publishes (track spikes
 # 12-20mm vs the 1.0cm here, racing flats 18-25mm vs 1.5cm), which makes raising
 # them to their documented midpoints look like an obvious cleanup. It is not: it
 # would make every spatial metric LESS accurate, and the protocol table gives no
@@ -508,8 +508,8 @@ def create_spatial_calibration(
     # KNOWN DEFECT, deliberately not fixed here.
     # This subtraction is only correct if ``runner_height_cm`` is a *shod*
     # height. It is not: the collection protocol specifies barefoot standing
-    # height (01_data_collection_protocol.md s1.3, "sole thickness is ADDED
-    # according to shoe type") and every caller supplies that. Meanwhile
+    # height ("sole thickness is ADDED according to shoe type") and every
+    # caller supplies that. Meanwhile
     # ``anatomical_height_px`` above is built from an explicitly shoe-free foot
     # estimate (see measure_body_segments), so both sides are barefoot and the
     # denominator should be ``runner_height_cm`` alone -- the shoe term should
@@ -520,7 +520,7 @@ def create_spatial_calibration(
     # verify a correction that small (checked: the anthropometric
     # proportion bands are 5-50x too wide, and the Kinovea pole scale is
     # depth-confounded), and changing it moves published
-    # section-6/G4 numbers. Revisit with the next re-certification.
+    # validation numbers. Revisit with the next re-certification.
     #
     # WHEN FIXING: this is HALF the defect. The other half is the
     # ``total_height_px / runner_height_cm`` recalculation ~25 lines below,

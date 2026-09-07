@@ -292,7 +292,7 @@ def detect_contacts_coarse(
     # (refine_contacts, 80–400 ms band) is propagated to the coarse set.
     # Spurious flight-phase detections (pose-landmark jitter) inflate
     # contact counts and produce sub-80 ms apparent durations after the
-    # next-contact upper bound clips them — see 01c §10.10 / §11.4.3.
+    # next-contact upper bound clips them.
     spurious_per_leg: Dict[str, int] = {"L": 0, "R": 0}
     survivors: List[GroundContact] = []
     for contact in all_contacts:
@@ -435,8 +435,8 @@ def prune_spurious_contacts(
 ) -> Tuple[List[GroundContact], Dict]:
     """Sliding-window prune of biomechanically-impossible-close contacts.
 
-    Detects phantom flight-phase contacts (F1 mechanism, 01c §10.18.6 /
-    Phase 6d) by comparing every adjacent pair sorted by frame against
+    Detects phantom flight-phase contacts (the F1 mechanism, Phase 6d)
+    by comparing every adjacent pair sorted by frame against
     a pace-derived plausible inter-contact band, then adjudicating via
     foot altitude (the one with smaller pixel-y is in the air → phantom).
 
@@ -1130,8 +1130,8 @@ def _detect_strike_pattern_for_contact(
     2-4 frames early, i.e. while the foot is still in swing and its
     heel/toe geometry does not yet reflect the strike. Placing contacts at
     the Kinovea GT ICs instead scores **43/45** clips against **34/45** for
-    the coarse frames (``scripts/analysis/c57_strike_frame_sensitivity.py``),
-    so the classifier's logic is sound and its input frames were not.
+    the coarse frames, so the classifier's logic is sound and its input
+    frames were not.
 
     Returns 'heel' / 'forefoot' / 'unknown'.
     """
@@ -1232,8 +1232,9 @@ def _detect_strike_pattern_for_contact(
 #
 # Two mechanisms were checked and RULED OUT before landing on quantization,
 # recorded so they are not re-investigated: (a) the annotation convention --
-# 01d defines both F_IC and F_TO as the first frame where the event is
-# visible, so both quantise late by ~half a frame and the offsets CANCEL for a
+# the annotation protocol defines both F_IC and F_TO as the first frame where
+# the event is visible, so both quantise late by ~half a frame and the offsets
+# CANCEL for a
 # duration, leaving GT GCT unbiased; (b) the differencing scheme -- every
 # velocity uses np.gradient (centred) and the crossing interpolation
 # (i-1) + fraction is correct, so neither introduces an offset.
@@ -1244,8 +1245,8 @@ def _detect_strike_pattern_for_contact(
 # across strike pattern. Deliberately scoped to S1's own geometry/conditions
 # per the user's direction (2026-08-07) to prioritise S1 correctness over
 # pre_validation's specific pass/fail table, which the diagnosis found is not a
-# reliable per-clip signal at this GT's frame-quantized resolution anyway
-# (§7). NOTE this constant is the DOMINANT term in the engine's GCT accuracy
+# reliable per-clip signal at this GT's frame-quantized resolution anyway.
+# NOTE this constant is the DOMINANT term in the engine's GCT accuracy
 # -- disabling it entirely moves v1.26 from MAE 6.63 / bias -2.03 ms to
 # MAE 11.38 / bias -9.67 ms -- and it is fitted on the same cohort it is
 # evaluated on, which is a circularity worth stating plainly.
@@ -1292,8 +1293,8 @@ _IC_LATE_BIAS_MS = 8.1
 # both 4K60, so that scaling is convention-consistent but not itself
 # validated at another resolution or frame rate.
 #
-# See scripts/analysis/c33_forefoot_threshold_rederivation.py for the
-# derivation, its pre-declared selection rule, and all four rejected arms.
+# The derivation carried a pre-declared selection rule and four rejected
+# arms; these two survived it.
 _FOREFOOT_IC_THRESH_FRAC = 0.00287  # 6.20 px/frame at 2160p/60fps
 _FOREFOOT_TO_THRESH_FRAC = 0.00352  # 7.60 px/frame at 2160p/60fps
 
@@ -1479,8 +1480,8 @@ def _refine_toe_off_foot_index_position(
     The search direction is BACKWARD from stance_end. A forward search
     from F_IC misinterprets the heel-to-toe roll on heel strikers (the
     toe is in the air for ~3 frames after F_IC and only descends to
-    ground_line during the roll) as toe-off — see 01c §10.18 / Phase 6c
-    Step 4 finding for the diagnostic. Backward search is robust to both
+    ground_line during the roll) as toe-off — the Phase 6c
+    diagnostic established this. Backward search is robust to both
     strike patterns: heel (toe descends to ground at frames F_IC+0..3,
     pinned at frames F_IC+3..11, lifts at F_IC+12) and forefoot (toe
     pinned from F_IC, lifts at F_IC+12); in both cases the LAST pinned
@@ -1615,7 +1616,7 @@ def refine_contacts(
       per-stance ground-line proxy by delta_lift_frac × body_height_px.
       Fix B2c (Phase 6c). Targets the heel-strike F3 mid-stance plantar
       flexion case where the ankle rises early during the heel-to-toe
-      roll (01c §10.13.2).
+      roll.
     - ``"per_strike_pattern"``: detect strike pattern per contact via
       heel-y vs foot-index-y at touchdown; route heel contacts through
       foot_index_position_lift, route forefoot / unknown / midfoot
@@ -1714,7 +1715,7 @@ def refine_contacts(
         # Extract and smooth ankle Y position (toe-off signal — Fix B-B1,
         # v1.5). On heel strikers the toe wobbles via plantar flexion at
         # mid-stance, false-triggering a toe-velocity threshold ~3-4
-        # frames early (01c §11.4.4). The ankle does not rise vertically
+        # frames early. The ankle does not rise vertically
         # until the foot is leaving the ground, so it is robust to that
         # mid-stance plantar flexion.
         ankle_y = _interpolate_nans(landmarks[:, ankle_idx, 1].copy())
@@ -2172,7 +2173,7 @@ def detect_ground_contacts(
     # That 31-vote block outvoted the 7 real, unanimously 'heel' contacts and
     # sent IC refinement down the toe-tracking branch on a heel striker,
     # costing +1.23 frames (+20.4 ms) of late IC bias.
-    # Measured in scripts/analysis/c57_strike_vote_reproduction.py.
+    # Measured by reproducing the shipped vote exactly, not inferred.
     #
     # Voting here fixes both halves at once: there is now exactly one coarse
     # list, so the vote and the refinement can no longer diverge. The window

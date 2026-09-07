@@ -609,7 +609,7 @@ def run_clip_pipeline(
     shoe_type: Optional[str] = None,
     rtm_landmarks: Optional[np.ndarray] = None,
     rtm_scores: Optional[np.ndarray] = None,
-    # v1.20 flags (defaults mirror the canonical CLI invocation in CLAUDE.md)
+    # v1.20 flags (defaults mirror the canonical CLI invocation)
     bidirectional: bool = True,
     # Two_pass is the unified default. Dropping the seeded third pass
     # is bit-identical for contacts, strike, GCT and cadence (RTMPose-driven,

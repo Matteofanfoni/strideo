@@ -10,9 +10,9 @@ re-exports from here, so training labels and the app read the same numbers.
 
 **What the correction is for.** The BlazePose hip trajectory under-reports
 vertical oscillation badly and consistently: measured against Kinovea on the
-15 annotated S1 clips, the raw pipeline value is **54.5% low on 15 of 15**
-(see ``scripts/analysis/vo_correction_production_gap.py``). This linear fit
-maps it onto the annotation's scale.
+15 annotated S1 clips, the raw pipeline value is **54.5% low on 15 of 15**,
+measured rather than estimated. This linear fit maps it onto the annotation's
+scale.
 
 **What it is not.** It is fitted on those same 15 clips, one venue, one camera
 geometry, so it is a calibration, not a validated estimator: it

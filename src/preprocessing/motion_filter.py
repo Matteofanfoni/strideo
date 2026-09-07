@@ -8,7 +8,7 @@ on that single property lets us keep v1.0's simple pipeline while
 discarding ghost-contaminated frames before they poison downstream
 metrics.
 
-v1.4 anatomy-gate experiment (TESTED — DEFERRED, see 01c §10.12):
+v1.4 anatomy-gate experiment (TESTED — DEFERRED):
 an optional anatomy gate runs alongside the motion gate as a strict-AND
 combiner. The 2026-04-25 Phase 4.5 measurement
 (``scripts/measure_anatomy_violations.py``) showed that motion_filter
@@ -17,19 +17,19 @@ non-anatomical (FAIL torso medians 0.53-0.68 vs NASA 0.30 — visually
 confirmed ghost-lock). The v1.4 strict-AND ship correctly rejected
 those frames but introduced NaN gaps in the landmark stream that broke
 ground-contact temporal continuity (800m_1 lost 2 of 3 refined contacts;
-Recovery_2 stride regressed PASS → FAIL). §6.4 GCT was unchanged on
-every clip regardless (refined-only mean — confirms anatomy gating
-cannot help §6.4). Decision: rolled back as production default. The
+Recovery_2 stride regressed PASS → FAIL). Validated GCT was unchanged
+on every clip regardless (refined-only mean — confirms anatomy gating
+cannot help it). Decision: rolled back as production default. The
 gate code is retained as **dormant** capability —
 ``apply_anatomy_gate`` defaults to ``False`` so the production path is
 v1.2-equivalent; the runner script's ``--anatomy-gate`` flag is kept
-for future re-experimentation. Re-design options recorded in 01c §10.12
+for future re-experimentation. Three re-design options are on record
 (mark-don't-filter, asymmetric tolerance, or Fix-C-coupled re-detection
 trigger) — none should be pursued before Fix B (v1.5) ships.
 
-This module is the final surviving piece of the M7/M9/M10 mitigation
-chain described in the pre-validation session report
-§10.6 — the multi-candidate/motion-gated/composite approaches all failed
+This module is the final surviving piece of the ghost-lock mitigation
+chain recorded in the pre-validation session
+report — the multi-candidate/motion-gated/composite approaches all failed
 because MediaPipe's detector itself, not the tracker, is the bottleneck
 for fast runners at 4K. A post-hoc filter sidesteps that problem: we
 don't try to make the detector better, we just drop its output when it's
@@ -73,10 +73,10 @@ ROLLING_WINDOW = 5
 # tolerance bands the gate enforces per frame. Asymmetric (Phase 5
 # 2026-04-25): torso stays at ±20 % because torso ratio is essentially
 # rigid across the gait cycle and was the strongest discriminator in the
-# §10.12 measurement (PASS torso 0.276-0.328 vs FAIL torso medians
+# anatomy-gate measurement (PASS torso 0.276-0.328 vs FAIL torso medians
 # 0.53-0.68). Thigh / shank widened to ±30 % because those segments
 # legitimately stretch / contract through the stride cycle (apparent
-# pixel length grows toward full extension at toe-off) — the §10.12
+# pixel length grows toward full extension at toe-off) — that same
 # measurement showed PASS shanks reaching 0.198, exactly at the old
 # ±20 % lower bound (0.197), causing single-frame dropouts mid-stride.
 # The first Phase 5 pilot on PV_800m_1_Victory showed every visible-
@@ -444,7 +444,7 @@ def combine_bidirectional_pose(
 
     Anatomy is used here as a per-frame **ratifier** between two candidate
     landmark sets, NOT as a strict-AND filter on a single candidate (the
-    v1.4 mistake — see 01c §10.12). Reuses ``_anatomy_pass_per_frame``
+    v1.4 mistake described above). Reuses ``_anatomy_pass_per_frame``
     from this module, which Phase 4.5 measurement showed cleanly
     discriminates ghost-locked frames (FAIL torso medians 0.5-0.7) from
     runner-locked frames (PASS torso ranges 0.276-0.328).
@@ -464,9 +464,9 @@ def combine_bidirectional_pose(
     Option B (2026-04-25) and reverted: the fallback frames carried
     enough hip / ankle position noise at gait-cycle extremes to perturb
     contact-detection refinement, regressing 3 v1.5-passing verdict cells
-    (Steady_2 §6.2, 800m_1 §6.2, 800m_1 §6.4) for a single new PASS
-    (Steady_1 §6.4) — net −2 PASSes vs the asymmetric-only baseline. See
-    01c §10.15 for the full measurement. Re-design before re-attempting.
+    (two on Steady_2 and 800m_1 speed, one on 800m_1 contact time) for a
+    single new PASS (Steady_1 contact time) — net −2 PASSes vs the
+    asymmetric-only baseline. Re-design before re-attempting.
 
     Args:
         lm_fwd / lm_rev: (T, 33, 2) pixel landmarks, indexed in source-frame

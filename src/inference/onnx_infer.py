@@ -41,8 +41,8 @@ def _stride_post_hoc(cadence_spm: float, velocity_ms: float) -> float:
     """stride_m = distance per stride = velocity (m/s) / strides-per-second.
 
     Mirrors the training-side post-hoc stride derivation exactly, including its
-    factor-of-2 fix (a stride is two steps, per D2/calculate_cadence) --
-    see that module's docstring for the full rationale.
+    factor-of-2 fix (a stride is two steps, as ``calculate_cadence`` counts
+    them) -- see that module's docstring for the full rationale.
     """
     safe_cadence = max(cadence_spm, _MIN_CADENCE_SPM)
     return velocity_ms * 120.0 / safe_cadence

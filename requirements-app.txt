@@ -26,9 +26,9 @@ streamlit==1.54.0                # PINNED: st.components.v2 (reCAPTCHA widget)
                                  # 2025->2026 releases; pin to the version this
                                  # was built and tested against, same rationale
                                  # as the mediapipe pin above.
-plotly>=6.0.0                   # StrideoNet-vs-DKE metric charts + Pace
+plotly>=6.0.0                   # StrideoNet-vs-engine metric charts + Pace
                                  # Analysis (results.py) — a speculative add
-                                 # until DKE-MC1/RP-PA1 gave it real
+                                 # until those charts gave it real
                                  # consumers 2026-08-27/28; confirmed kept,
-                                 # not orphaned (ARCH-c, D197)
+                                 # not orphaned
 reportlab>=4.0.0

@@ -175,7 +175,7 @@ def convert_to_cfr(
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg conversion failed: {result.stderr.strip()}")
 
-    # Verify output is truly CFR (protocol §11.2 verification step)
+    # Verify output is truly CFR (the protocol's own verification step)
     _verify_cfr(str(out), target_fps)
 
     return str(out)
@@ -210,8 +210,8 @@ def ensure_cfr(
       span (cadence ratio 0.986-1.008), so it silently reports a plausible
       number for footage it never saw the timing of.
 
-    See ``scripts/analysis/c74_fps_ingest_diagnosis.py`` and
-    ``c74_model_timescale_probe.py`` for both measurements.
+    Both claims were measured before this ingest normalisation was chosen,
+    rather than assumed.
 
     Args:
         video_path: Path to the video file.
@@ -313,7 +313,7 @@ def _verify_cfr(video_path: str, expected_fps: int) -> None:
     Verify that a converted video is truly CFR at the expected frame rate.
 
     Checks that both r_frame_rate and avg_frame_rate equal expected_fps/1,
-    as specified in the data collection protocol §11.2.
+    as specified in the data collection protocol.
 
     Args:
         video_path: Path to the converted video file.

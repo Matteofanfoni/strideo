@@ -1,13 +1,13 @@
 """DORMANT — v1.1 experiment, superseded by v1.2 motion_filter.
 
-This module implements M7 (composite score) and M9 (velocity filter) from
-01c §10.6. Both were tested on PV_800m_1_Victory in April 2026 and both
-underperformed the v1.0 baseline because MediaPipe's detector — not its
-tracker — is the bottleneck on fast subjects at 4K. IMAGE mode with
-num_poses=4 returned only 1.17 candidates/frame on average (detector
-threshold too conservative even at 0.2), so there was nothing for a
-selector to choose between. See 01c §10.6 table for the detailed failure
-numbers.
+This module implements two candidate-selection experiments, a composite
+score and a velocity filter. Both were tested on PV_800m_1_Victory in
+April 2026 and both underperformed the v1.0 baseline because MediaPipe's
+detector — not its tracker — is the bottleneck on fast subjects at 4K.
+IMAGE mode with num_poses=4 returned only 1.17 candidates/frame on
+average (detector threshold too conservative even at 0.2), so there was
+nothing for a selector to choose between. The pre-validation session
+report carries the detailed failure numbers.
 
 The v1.2 default pipeline does *not* import this module. It remains in
 the tree for future experiments — e.g. if we ever get MediaPipe to emit
@@ -34,7 +34,7 @@ pipeline (metrics, ground-contact detection, annotation rendering).
 Configuration is loaded from ``configs/pose_selection.yaml`` so weights
 and velocity bands can be tuned without touching code. See
 the pre-validation session report for the
-motivation and the M7/M9 proposal.
+motivation and the original proposal.
 """
 
 from __future__ import annotations
@@ -251,7 +251,7 @@ def select_by_velocity(
     multi_world_landmarks: Optional[np.ndarray] = None,
     config: Optional[Dict[str, Any]] = None,
 ) -> SelectionResult:
-    """M9 — longest candidate chain whose every transition is in-band.
+    """Velocity filter — longest candidate chain whose every transition is in-band.
 
     Algorithm:
       1. For every frame, drop candidates with mean hip visibility below
@@ -373,7 +373,7 @@ def select_by_composite(
     multi_world_landmarks: Optional[np.ndarray] = None,
     config: Optional[Dict[str, Any]] = None,
 ) -> SelectionResult:
-    """M7 — weighted composite score (velocity + visibility + area).
+    """Composite score — weighted velocity + visibility + area.
 
     Uses the same longest-path DAG skeleton as select_by_velocity, but
     edges are scored by the composite (velocity match + destination

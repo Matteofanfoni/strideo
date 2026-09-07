@@ -297,7 +297,8 @@ def resolve_cy(
     A pole's base is a ground-plane point *on the pole line*, so the probe's own
     definition forces ``k = 1`` there. Inverting gives one ``cy`` estimate per
     pole per resolution. 1080p estimates are reported rescaled to 4K pixels.
-    Needs ``M8``'s ``pole_base_y_px`` column; poles without it are skipped.
+    Needs the annotation pass's ``pole_base_y_px`` column; poles without it
+    are skipped.
     """
     per: List[Dict[str, Any]] = []
     for res in ("4K", "1080p"):
@@ -391,9 +392,9 @@ def resolve_cohort_offset_m(ks: Sequence[float] | np.ndarray, cam_h: float) -> f
     **Diagnostic, not the production offset.** This *solves* ``a`` from the data
     by asserting the cohort median clip is on the pole line. A later step briefly
     used it that way (one cohort-wide ~1.35 cm offset for all 45 clips) and no
-    longer does: ``scripts/analysis/c43_compute_depth_correction_factors.py``
-    now looks up each runner's own measured shoe stack height on the side of the
-    shoe that runner actually strikes with (``RUNNER_SHOE`` there), which is a
+    longer does: the correction factors are now derived by looking up each
+    runner's own measured shoe stack height on the side of the
+    shoe that runner actually strikes with, which is a
     real measurement rather than a solved anchor and does not assume every
     runner's shoe is equally thick. What this function is still *good* for is
     falsification -- see the note about ~1.5 cm vs ~9.5 cm below -- and that is

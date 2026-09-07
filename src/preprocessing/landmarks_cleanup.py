@@ -58,7 +58,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from scipy.interpolate import CubicSpline, PchipInterpolator, interp1d
 
-# Defaults chosen from the Phase 6a design (01c §10.16). 4 frames at
+# Defaults chosen from the Phase 6a design. 4 frames at
 # 60 fps = 67 ms — biomechanically plausible to interpolate (well
 # inside a stride). 0.5 visibility threshold matches the floor used by
 # motion_filter elsewhere in the pipeline.
@@ -343,13 +343,13 @@ def fill_gaps(
 # Phase 6b: position-quality flagging via RTS Kalman smoother
 # ---------------------------------------------------------------------------
 #
-# Motivation (01c §10.15.6): the per-frame anatomy ratifier in the v1.6
+# Motivation: the per-frame anatomy ratifier in the v1.6
 # bidirectional combiner is a *shape*-quality gate (torso/thigh/shank
 # ratio bands) — it cannot catch positional drift. PV_800m_1 frames
 # 125–127 had skeletons drawn with feet at/below track level despite
 # passing the asymmetric anatomy ratios. v1.7 gap-fill recovers
 # non-contact-moment dropouts but doesn't touch the contact-moment
-# anchor frames §6.4 GCT consumes. Phase 6b operates *at* contact
+# anchor frames the validated GCT consumes. Phase 6b operates *at* contact
 # moments by flagging landmark observations that deviate from a
 # temporally-smoothed trajectory and replacing them with the smoother
 # estimate.
@@ -367,7 +367,7 @@ def fill_gaps(
 # through unchanged; only frames where |obs - smoothed| > flag_sigma *
 # sqrt(R) get replaced. This preserves the v1.7-passing verdict cells
 # byte-for-byte on clean frames (the "no regression" criterion is
-# binary) while directly attacking the §10.15.6 mis-anchored case.
+# binary) while directly attacking the mis-anchored case above.
 
 # Q_vel = 2.8 px²/frame² with R = 25 px² gives a smoothing scale
 # τ ≈ √(R / Q_vel) ≈ 3 frames (~50 ms at 60 fps) — wide enough to
@@ -382,7 +382,7 @@ DEFAULT_Q_VEL = 2.8
 DEFAULT_R = 25.0
 # 3-σ rule on observation noise: |obs - smoothed| > 3 * 5 px = 15 px
 # at default R. At Kinovea 244.61 px/m calibration that's ~6 cm — the
-# magnitude of the §10.15.6 frames-125–127 mis-anchoring.
+# magnitude of the frames-125–127 mis-anchoring described above.
 DEFAULT_FLAG_SIGMA = 3.0
 
 
@@ -607,8 +607,8 @@ def flag_and_smooth(
 #
 # Iteration #1 (RTS Kalman in flag_and_smooth above) failed pilot on
 # PV_800m_1: at any parameter setting the smoother either over-flagged
-# real contact-moment biomechanics (regressing §6.4 GCT) or
-# under-flagged the §10.15.6 mis-anchored case. Root cause: the
+# real contact-moment biomechanics (regressing the validated GCT) or
+# under-flagged the mis-anchored case above. Root cause: the
 # constant-velocity prior cannot distinguish "ankle decelerating at
 # touchdown" from "ankle drawn at wrong height" — both produce large
 # residuals.
@@ -621,7 +621,7 @@ def flag_and_smooth(
 #   |Δposition[t-1 → t+1]| ≤ ceiling  (the neighbours are mutually
 #                                       consistent — the outlier is t)
 #
-# This pattern detects single-frame spikes (the §10.15.6 frame-126
+# This pattern detects single-frame spikes (the frame-126
 # case: ankle drops 100+ px to track level then snaps back) but does
 # NOT trigger on contact-moment biomechanics (where exactly one of the
 # Δs is high — touchdown deceleration, toe-off acceleration — but the
@@ -634,7 +634,7 @@ def flag_and_smooth(
 # Real ankle vertical velocity peaks at toe-off ≈ 4–6 m/s (~16–24
 # px/frame); horizontal swing-leg velocity peaks ≈ 14 m/s (~57 px/frame
 # in body frame). The 80 px/frame ceiling leaves a comfortable margin
-# above real motion while catching the §10.15.6 single-frame mis-
+# above real motion while catching that single-frame mis-
 # anchoring (~70–120 px Δy in one frame).
 
 DEFAULT_VELOCITY_CEILING_PX_PER_FRAME = 80.0

@@ -1,4 +1,4 @@
-"""DORMANT — v1.1 experiment (M10), superseded by v1.2 motion_filter.
+"""DORMANT — a v1.1 experiment, superseded by v1.2 motion_filter.
 
 Tested on PV_800m_1_Victory in April 2026. Motion gating correctly
 identified the runner's active window (frames 47-186, 140 frames) but
@@ -11,10 +11,10 @@ messier tracking overall — downstream metrics (cadence, stride) worsened.
 The v1.2 default pipeline does not use this module. It remains available
 via its public API in case a future iteration wants to combine motion
 gating with a smarter seed-frame strategy (e.g., delay tracker start
-until the frame with peak motion energy). For reference, 01c §10.6
-M10 is marked "Tested — failed" with the frame-level QA above.
+until the frame with peak motion energy). It is recorded as
+"Tested — failed" with the frame-level QA above.
 
-Motion-gated frame windowing for pose extraction (Phase 2 / M10).
+Motion-gated frame windowing for pose extraction.
 
 Context: MediaPipe Pose in VIDEO mode locks onto whichever person-shaped
 thing exceeds the detection threshold in the first frame it runs on. When

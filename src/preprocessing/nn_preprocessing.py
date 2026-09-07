@@ -287,7 +287,7 @@ LANDMARK_ORDER_U_SHAPE: Tuple[int, ...] = (
 LANDMARK_ORDER_MEDIAPIPE_RAW: Tuple[int, ...] = tuple(sorted(LANDMARK_ORDER_U_SHAPE))
 
 #: Same 17 landmarks, a fixed pseudo-random permutation of LANDMARK_ORDER_U_SHAPE
-#: (``random.Random(13).shuffle`` on the U-shape list -- seed 13 for N13, chosen
+#: (``random.Random(13).shuffle`` on the U-shape list -- seed 13, chosen
 #: once and hardcoded here rather than regenerated at runtime, so every run using
 #: this arm sees the identical fixed order).
 LANDMARK_ORDER_FIXED_RANDOM: Tuple[int, ...] = (
@@ -730,7 +730,7 @@ def fill_large_gaps(
 
 
 # Discrete nominal pace values for FiLM conditioning
-# (see Neural Network Architecture §3.2.1–3.2.2)
+# (see the network architecture reference)
 PACE_LEVEL_NORMALIZED: Dict[str, float] = {
     "threshold": 0.33,
     "1500m": 0.55,
@@ -752,12 +752,11 @@ _PACE_LEVEL_ALIASES: Dict[str, str] = {
 # midpoint of the illustrative ranges in
 # the network architecture reference (Threshold
 # 3.6-5.2, 1500m 4.2-6.4, 800m 4.8-7.2). The discrete 0.33/0.55/0.78
-# scalars were never derived from real velocities -- §3.2.1 calls them "a
+# scalars were never derived from real velocities -- that reference calls them "a
 # useful modelling convention", not a measurement -- so this table is a
 # provisional bridge, needed only so a continuous velocity (measured or
 # target-scaled) has a defined mapping onto the same conditioning axis.
-# Revisit before any accuracy claim (relative_effort_conditioning_prompt.md
-# Step 6).
+# Revisit before any accuracy claim.
 PACE_LEVEL_NOMINAL_VELOCITY_MS: Dict[str, float] = {
     "threshold": 4.4,
     "1500m": 5.3,
@@ -821,29 +820,29 @@ def normalize_velocity_continuous(velocity_ms: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# bounded_hybrid FiLM conditioning (see the pre-registration,
-# preregistration.md §7, 2026-08-19 amendment -- "N3's conditioning-accuracy
-# comparison"). S1-derived, frozen constants: do NOT recompute from data at
-# runtime. K is N3-a's worst-case value: the most extreme S1 clip
+# bounded_hybrid FiLM conditioning, specified in advance by the
+# pre-registration's 2026-08-19 conditioning-accuracy amendment.
+# S1-derived, frozen constants: do NOT recompute from data at runtime.
+# K is that amendment's worst-case value: the most extreme S1 clip
 # exactly reaches the +-0.10 bound, so K is fixed here rather than swept.
 # ---------------------------------------------------------------------------
 
 #: Slope applied to the capacity-normalised intensity deviation before
-#: clipping. Frozen by the N3-a amendment; not a tunable
+#: clipping. Frozen by that amendment; not a tunable
 #: hyperparameter.
 BOUNDED_HYBRID_K: float = 0.545734
 
 #: Cohort-typical achieved intensity (v_measured / v_capacity) per pace
 #: level, i.e. the I at which bounded_hybrid collapses exactly to
-#: normalize_pace(pace_level). S1-derived, frozen by the N3-a amendment.
+#: normalize_pace(pace_level). S1-derived, frozen by that amendment.
 BOUNDED_HYBRID_I_REF: Dict[str, float] = {
     "threshold": 1.064935,
     "1500m": 1.167027,
     "800m": 1.241943,
 }
 
-#: Symmetric clip bound on the intensity-driven adjustment. Frozen by the
-#: N3-a amendment -- see bounded_hybrid_conditioning's own docstring
+#: Symmetric clip bound on the intensity-driven adjustment. Frozen by that
+#: amendment -- see bounded_hybrid_conditioning's own docstring
 #: for why this value keeps pace levels from overlapping.
 BOUNDED_HYBRID_BOUND: float = 0.10
 
@@ -853,8 +852,8 @@ def bounded_hybrid_conditioning(pace_level: str, intensity: float) -> float:
 
     Combines the discrete pace-level anchor with a small, bounded correction
     for how hard the runner actually worked relative to their own capacity,
-    fully specified in advance by the N3-a/N3 pre-registration amendments in
-    the LOOCV pre-registration (no free parameters at
+    fully specified in advance by the LOOCV pre-registration's own
+    conditioning amendments (no free parameters at
     run time)::
 
         scalar = normalize_pace(pace_level)
@@ -862,7 +861,7 @@ def bounded_hybrid_conditioning(pace_level: str, intensity: float) -> float:
 
     where ``I = v_measured / v_capacity(runner)`` and ``v_capacity(runner)``
     is the runner's VDOT-predicted 1500m target velocity (m/s) -- the
-    capacity anchor pre-declared on physiological grounds in the N3-a
+    capacity anchor pre-declared on physiological grounds in that
     amendment, not searched.
 
     The ``BOUND = 0.10`` clip is what keeps pace levels non-overlapping:
@@ -981,8 +980,8 @@ def smooth_landmark_series(
         landmarks: (T, L, 2) coordinates, NaN where missing.
         sigma: Gaussian std in **frames**, used when ``filter_type="gaussian"``.
             ``0.0`` disables smoothing and returns the input unchanged
-            (bit-identical), which is the frozen pre-N20 behaviour.
-        filter_type: ``"gaussian"`` (default, N20) or ``"butterworth"`` (N20b).
+            (bit-identical), which is the frozen pre-smoothing behaviour.
+        filter_type: ``"gaussian"`` (the default) or ``"butterworth"``.
         cutoff_hz: -3 dB cutoff for the Butterworth arm. ``0.0`` disables it.
         order: Butterworth order. Applied via ``filtfilt``, so the effective
             magnitude response is squared and the phase response is zero --
@@ -1086,7 +1085,7 @@ def preprocess_for_nn(
         visibility_discount: Multiplier for interpolated visibility
         smoothing_sigma: Gaussian std in frames for temporal smoothing of the
             landmark series. **Default 0.0 disables it and is
-            bit-identical to the pre-N20 behaviour** — every result before
+            bit-identical to the pre-smoothing behaviour** — every result before
             2026-08-18 was produced at 0.0. Applied after gap interpolation
             and before hip-centred normalisation, so the normalisation
             reference inherits the smoothing; see
