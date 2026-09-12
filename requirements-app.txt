@@ -28,7 +28,15 @@ onnxruntime-gpu[cuda,cudnn]==1.26.0   # RTMPose-x backend. Superset of plain
                                 # combination already validated locally on the
                                 # Legion RTX 5070 Ti (environment_rtmpose.yml):
                                 # onnxruntime-gpu 1.26.0 + cuDNN 9.x.
-rtmlib>=0.0.15                  # thin RTMPose wrapper (pure-python, 61 KB)
+rtmlib>=0.0.15                  # thin RTMPose wrapper (pure-python, 61 KB).
+                                # Its own METADATA unconditionally requires
+                                # plain `onnxruntime` too, which installs
+                                # into the same on-disk path as
+                                # onnxruntime-gpu above and silently wins if
+                                # installed after it in the same `pip
+                                # install` — the Dockerfile's post-install
+                                # uninstall+force-reinstall step undoes
+                                # that; this file alone is not sufficient.
 pydantic>=2.0.0                 # metadata models
 requests>=2.31.0                # contact form POST + reCAPTCHA siteverify call
 

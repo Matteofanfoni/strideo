@@ -32,7 +32,23 @@ WORKDIR /home/user/app
 # Install Python dependencies before copying the rest of the code so Docker
 # can cache this layer and skip re-installation on code-only changes.
 COPY --chown=user requirements-app.txt .
-RUN pip install --no-cache-dir -r requirements-app.txt
+# rtmlib's own METADATA unconditionally requires plain `onnxruntime` (any
+# version), with no awareness that `onnxruntime-gpu` already satisfies the
+# same import. Both packages install into the same on-disk `onnxruntime/`
+# directory, so a single `pip install -r requirements-app.txt` leaves
+# whichever wheel's files were physically written last as the one that
+# actually imports — empirically confirmed to be plain `onnxruntime`
+# (latest, CPU-only), silently discarding CUDAExecutionProvider regardless
+# of `onnxruntime-gpu`'s pin. The `uninstall` + `--force-reinstall
+# --no-deps` below undoes that clobber deterministically, matching the
+# clean single-package state already validated locally
+# (environment_rtmpose.yml's conda env only ever shows onnxruntime-gpu).
+# `pip uninstall` on a package that (in some future dependency change)
+# turns out not to be installed exits 0, not an error, so this stays safe
+# either way.
+RUN pip install --no-cache-dir -r requirements-app.txt && \
+    pip uninstall -y onnxruntime && \
+    pip install --no-cache-dir --force-reinstall --no-deps "onnxruntime-gpu[cuda,cudnn]==1.26.0"
 
 # Copy application code
 COPY --chown=user . .
