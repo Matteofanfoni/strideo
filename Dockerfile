@@ -14,7 +14,17 @@ RUN apt-get update && \
 RUN useradd -m -u 1000 user
 USER user
 ENV PATH=/home/user/.local/bin:$PATH
-# Force MediaPipe to use CPU delegate — GPU delegate fails silently in headless Docker
+# Force MediaPipe (BlazePose, the fast path) to use its CPU delegate — the
+# GPU delegate fails silently in headless Docker. This is unrelated to
+# RTMPose's own CUDA use below: RTMPose goes through onnxruntime, not
+# MediaPipe's delegate, and auto-detects CUDA at runtime instead
+# (src.preprocessing.rtmpose_extractor.detect_device()). No base-image or
+# driver setup needed here for that: the same image runs unmodified on a
+# CPU-tier or GPU-tier HF Space — GPU tiers expose the NVIDIA driver via HF's
+# container runtime, and requirements-app.txt's
+# onnxruntime-gpu[cuda,cudnn]==1.26.0 brings its own CUDA/cuDNN user-space
+# libs via pip (Linux-only bundling; that's why the Windows dev env instead
+# uses conda-forge cudnn, see environment_rtmpose.yml).
 ENV MEDIAPIPE_DISABLE_GPU=1
 
 WORKDIR /home/user/app

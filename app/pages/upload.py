@@ -213,12 +213,24 @@ video {
    *:not(input) { display: none }` hid Age/Height entirely, which means the
    real <input> isn't a direct child of that container - the rule's
    `:not(input)` matched the wrapper div the input actually lives inside,
-   hiding it along with everything else. Not attempting another blind guess
-   here without real DOM inspection; back to just the ::-ms-clear attempt
-   below, which is at least additive/safe even if it doesn't fully fix the
-   tab order (the circled "x" that eats a Tab press once the field has a
-   value is still unresolved). */
+   hiding it along with everything else. */
 input::-ms-clear, input::-ms-reveal { display: none; width: 0; height: 0; }
+/* The circled "x" that eats a Tab press once a field has a value (user
+   report) is BaseWeb's own clear icon, not addressed by anything
+   above - ::-ms-clear only ever touched IE/Edge's native clear affordance,
+   never this one. Confirmed from Streamlit 1.54's actual shipped frontend
+   (base-input.TSQjctlq.js and index.Drusyo5m.js): the icon is a real,
+   separate DOM node with `tabIndex={0}` and `role="button"`, always
+   labelled "Clear value" (`"Clear all"` for a multiselect, unused on this
+   page) via both `title` and `aria-label` - stable, semantic hooks, unlike
+   a build-hashed class name. It appears on every populated text_input,
+   number_input AND selectbox alike (Sex/Primary event/Secondary event
+   included), which is why the choppiness was not confined to Age/Height,
+   just most noticeable there. Hidden outright, matching the steppers above
+   rather than only detabbing it - Streamlit's own frontend offers no CSS
+   way to change tabIndex, and select-all + delete/backspace still clears a
+   field with no button. */
+[aria-label="Clear value"], [aria-label="Clear all"] { display: none !important; }
 
 /* ── Analysis run sections ── */
 .run-head{
@@ -351,6 +363,43 @@ EVENT_DISTANCES = {
     "10000 m": 10000,
 }
 
+
+def _resolve_pb_pairs(entries):
+    """Turn (label, event, pb_text) entries into ``predict_paces`` pairs
+    plus any warnings for an event that was selected with a PB entered that
+    Strideo could not parse.
+
+    Pulled out as a pure function, rather than left as an inline loop, so
+    the "was this PB actually used" logic can be unit-tested without
+    running the whole page - the page itself is a Streamlit script that
+    executes top-to-bottom on import (a prior bug in this same loop shipped
+    invisibly for exactly that reason: nothing exercised it outside a live
+    app).
+
+    Args:
+        entries: ``(label, event, pb_text)`` tuples, in priority order.
+
+    Returns:
+        ``(pairs, warnings)`` - ``pairs`` is ``[(distance_m, seconds), ...]``
+        for ``predict_paces``; ``warnings`` is one message per entry that
+        had both an event and non-empty text but failed to parse.
+    """
+    pairs = []
+    warnings = []
+    for label, event, pb_text in entries:
+        dist = EVENT_DISTANCES.get(event or "")
+        secs = parse_time_to_seconds(pb_text)
+        if dist and secs:
+            pairs.append((float(dist), secs))
+        elif dist and (pb_text or "").strip():
+            warnings.append(
+                f'{label} PB "{pb_text}" isn\'t a time Strideo recognises '
+                'and was not used - try "m:ss.ss" (e.g. "1:58.5") or '
+                '"m.ss.ss" (e.g. "1.58.50").'
+            )
+    return pairs, warnings
+
+
 with st.container(border=True):
     st.markdown(
         '<p class="card-h">Runner information</p>',
@@ -396,15 +445,19 @@ with st.container(border=True):
     # a parseable time seeds the predictor; two PBs personalise the curve
     # (profile + better target paces). These are filming suggestions only -
     # the measured hip velocity reported after analysis stays authoritative.
-    _pb_pairs = []
-    for _event, _pb_text in [
-        (primary_event, primary_pb),
-        (secondary_event, secondary_pb),
-    ]:
-        _dist = EVENT_DISTANCES.get(_event or "")
-        _secs = parse_time_to_seconds(_pb_text)
-        if _dist and _secs:
-            _pb_pairs.append((float(_dist), _secs))
+    #
+    # An event picked with a PB text entered but unparseable used to drop
+    # silently: the pair was just left out of `_pb_pairs`, with nothing
+    # telling the runner their second PB never counted - it read as "target
+    # paces exist but confidence never improved," not as an error.
+    _pb_pairs, _pb_warnings = _resolve_pb_pairs(
+        [
+            ("Primary", primary_event, primary_pb),
+            ("Secondary", secondary_event, secondary_pb),
+        ]
+    )
+    for _pb_warning in _pb_warnings:
+        st.warning(_pb_warning)
 
     prediction = predict_paces(_pb_pairs) if _pb_pairs else None
 

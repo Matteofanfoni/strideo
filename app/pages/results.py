@@ -610,8 +610,46 @@ inject_page_css("""
     .hdr-pill.w24{ grid-column: span 48; }
   .range-row{ grid-template-columns: 1fr; gap: 4px; }
   .range-verdict{ text-align: left; }
-  /* Wide cross-pace table scrolls horizontally instead of overflowing */
-  .compare-table{ display: block; overflow-x: auto; white-space: nowrap; }
+  /* Both .compare-table users (Contact Tracker, Cross-Run Comparison) carry
+     6-7 columns - too many to fit, and a horizontally-scrolling table hides
+     most of the row with no visible affordance that more content exists
+     (found 2026-09-12: the user's own phone check saw the table clipped, not
+     scrolled). Each row becomes its own bordered card instead, one field per
+     line, the field's own name as a label above its value via the
+     data-label attribute every <td> in this file already carries. */
+  .compare-table, .compare-table tbody, .compare-table tr, .compare-table td{
+    display: block;
+    width: 100%;
+  }
+  .compare-table thead{ display: none; }
+  .compare-table{
+    background: none;
+    border: none;
+    border-radius: 0;
+  }
+  .compare-table tr{
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-bottom: 10px;
+    padding: 4px 0;
+  }
+  .compare-table tr:last-child{ margin-bottom: 0; }
+  .compare-table td{
+    padding: 6px 16px !important;
+    border-bottom: none !important;
+  }
+  .compare-table td::before{
+    content: attr(data-label);
+    display: block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.63rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-subtle);
+    margin-bottom: 2px;
+  }
 }
 """)
 
@@ -808,6 +846,24 @@ def fmt(value, decimals=1, fallback="N/A"):
     except (TypeError, ValueError):
         return str(value)
     return f"{value:.{decimals}f}"
+
+
+def _std_sub_pill(value, decimals, unit):
+    """The small `± std` sub-label under a Calculated Metrics pill, omitted
+    entirely rather than rendered as a meaningless "± N/A", per user
+    feedback. StrideoNet's own metrics always carry NaN here (no
+    per-contact variance to report - see `run_fast_path`'s
+    ``cadence_std=float("nan")`` etc.), and that is expected, not a bug: the
+    pill's job is to say "here is a measured spread" when one exists, not to
+    say "there is no spread" when there isn't one."""
+    if value is None:
+        return ""
+    try:
+        if math.isnan(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return f'<span class="hdr-pill-label">± {fmt(value, decimals)} {unit}</span>'
 
 
 def quality_color(value, good=0.7, ok=0.4):
@@ -1240,8 +1296,15 @@ def _render_contact_tracker(analysis, clip_strike_pattern):
         leg_txt = leg_names.get(c.leg, c.leg)
         contact_strike = (c.strike_pattern or "-").capitalize()
         rows.append(
-            f"<tr><td>{i}</td><td>{leg_txt}</td><td>{ic_txt}</td>"
-            f"<td>{to_txt}</td><td>{gct_txt}</td><td>{contact_strike}</td></tr>"
+            # data-label feeds the mobile stacked-card layout (see the
+            # .compare-table media query), which shows one field per line
+            # with its own label instead of a table row too wide to read.
+            f'<tr><td data-label="#">{i}</td>'
+            f'<td data-label="Leg">{leg_txt}</td>'
+            f'<td data-label="Contact (IC)">{ic_txt}</td>'
+            f'<td data-label="Toe-off (TO)">{to_txt}</td>'
+            f'<td data-label="GCT">{gct_txt}</td>'
+            f'<td data-label="Strike">{contact_strike}</td></tr>'
         )
 
     st.markdown(
@@ -1310,7 +1373,14 @@ def _render_metric_comparison_charts(m_fast, m_full, video_name):
         )
         with col:
             st.plotly_chart(
-                fig, use_container_width=True, key=f"dke_chart_{key}_{video_name}"
+                fig,
+                use_container_width=True,
+                key=f"dke_chart_{key}_{video_name}",
+                # The hover-triggered modebar overlaps the title once the
+                # chart is narrow enough (one-per-row on mobile, or four-up
+                # on a small desktop window) - these are read-only summary
+                # charts, not something a user needs to zoom/pan/export.
+                config={"displayModeBar": False},
             )
 
 
@@ -1393,7 +1463,12 @@ def _render_pace_analysis_charts(results):
             )
         )
         with col:
-            st.plotly_chart(fig, use_container_width=True, key=f"pace_chart_{key}")
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                key=f"pace_chart_{key}",
+                config={"displayModeBar": False},
+            )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1484,10 +1559,23 @@ if results_with_metrics:
 
     m_fast = r.get("metrics_fast")
 
+    # This section is StrideoNet's, and only StrideoNet's, regardless of
+    # whether the engine has since run: `m` above is "best available"
+    # (metrics_full once has_full_analysis), and rendering it here silently
+    # swapped every pill's source under a heading that still said
+    # "StrideoNet." The engine's own numbers are never hidden by this - the
+    # "Agreement with the second check" delta note right below and the
+    # Deterministic Kinematics Engine section further down both show them,
+    # source-labeled. `_cross_clip_metrics` already encodes this same
+    # "always StrideoNet, fall back to whatever's resolved only for a
+    # pre-fast-path saved import" rule for Pace Analysis / Cross-Run
+    # Comparison, so it is reused here rather than re-deriving it.
+    m_display = _cross_clip_metrics(r)
+
     # Every value (core + derived) as pills in one bordered card,
     # instead of separate floating pill-boxes plus a differently-formatted
     # derived-metrics text line.
-    osc_leg = fmt(m.get("oscillation_leg_ratio", None), 3)
+    osc_leg = fmt(m_display.get("oscillation_leg_ratio", None), 3)
     # This said "the complement of ground contact time within a stride",
     # which is the same step-vs-stride slip that once made the duty factor
     # read 2x high. `calculate_flight_time` is `60000 / cadence_spm - gct`
@@ -1527,7 +1615,7 @@ if results_with_metrics:
             "The in-depth engine reads this well below annotated reference, "
             "so the figure shown carries a correction fitted on 15 annotated "
             "clips. A calibration, not a validated measurement."
-            if m.get("oscillation_display_corrected")
+            if m_display.get("oscillation_display_corrected")
             else "StrideoNet predicts this on the annotated reference scale."
         )
     )
@@ -1541,7 +1629,7 @@ if results_with_metrics:
         "means less of the motion is vertical. Descriptive only, it has not "
         "been checked against a reference measurement."
     )
-    pace_compare_html = _pace_compare_pills_html(r, m)
+    pace_compare_html = _pace_compare_pills_html(r, m_display)
     # Row order set by the user 2026-08-31: the six directly-measured gait
     # metrics first, then the six speed/pace ones. "Pace" is now "Calculated
     # Pace", so that it and "Measured pace" beside it say which is which
@@ -1554,47 +1642,47 @@ if results_with_metrics:
         '<div class="hdr-strip">'
         '<div class="hdr-pill">'
         '<span class="hdr-pill-label">Cadence</span>'
-        f'<span class="hdr-pill-value">{fmt(m["cadence_spm"], 0)} spm</span>'
-        f'<span class="hdr-pill-label">± {fmt(m["cadence_std"], 1)} spm</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["cadence_spm"], 0)} spm</span>'
+        f'{_std_sub_pill(m_display["cadence_std"], 1, "spm")}'
         "</div>"
         '<div class="hdr-pill">'
         '<span class="hdr-pill-label">Stride Length</span>'
-        f'<span class="hdr-pill-value">{fmt(m["stride_length_m"], 2)} m</span>'
-        f'<span class="hdr-pill-label">± {fmt(m["stride_length_std"], 2)} m</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["stride_length_m"], 2)} m</span>'
+        f'{_std_sub_pill(m_display["stride_length_std"], 2, "m")}'
         "</div>"
         '<div class="hdr-pill">'
         f'<span class="hdr-pill-label">Vertical Oscillation{osc_tip}</span>'
-        f'<span class="hdr-pill-value">{fmt(m["oscillation_cm"], 1)} cm</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["oscillation_cm"], 1)} cm</span>'
         f'<span class="hdr-pill-label">{osc_leg} × leg</span>'
         "</div>"
         '<div class="hdr-pill">'
         '<span class="hdr-pill-label">Ground Contact Time</span>'
-        f'<span class="hdr-pill-value">{fmt(m["gct_ms"], 0)} ms</span>'
-        f'<span class="hdr-pill-label">± {fmt(m["gct_std"], 1)} ms</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["gct_ms"], 0)} ms</span>'
+        f'{_std_sub_pill(m_display["gct_std"], 1, "ms")}'
         "</div>"
         '<div class="hdr-pill">'
         f'<span class="hdr-pill-label">Flight Time{flight_tip}</span>'
-        f'<span class="hdr-pill-value">{fmt(m["flight_time_ms"], 0)} ms</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["flight_time_ms"], 0)} ms</span>'
         "</div>"
         '<div class="hdr-pill">'
         f'<span class="hdr-pill-label">Duty Factor{duty_tip}</span>'
-        f'<span class="hdr-pill-value">{fmt(m["duty_factor"], 2)}</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["duty_factor"], 2)}</span>'
         "</div>"
         "</div>"
         '<div class="hdr-strip">'
         '<div class="hdr-pill">'
         '<span class="hdr-pill-label">Speed</span>'
-        f'<span class="hdr-pill-value">{fmt(m["velocity_kmh"], 1)} km/h</span>'
-        f'<span class="hdr-pill-label">{fmt(m["velocity_ms"], 2)} m/s</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["velocity_kmh"], 1)} km/h</span>'
+        f'<span class="hdr-pill-label">{fmt(m_display["velocity_ms"], 2)} m/s</span>'
         "</div>"
         '<div class="hdr-pill">'
         f'<span class="hdr-pill-label">Calculated Pace{calculated_pace_tip}</span>'
-        f'<span class="hdr-pill-value">{m.get("pace_per_km", "N/A")}/km</span>'
+        f'<span class="hdr-pill-value">{m_display.get("pace_per_km", "N/A")}/km</span>'
         "</div>"
         f"{pace_compare_html}"
         '<div class="hdr-pill">'
         f'<span class="hdr-pill-label">Vertical Oscillation Ratio{vo_ratio_tip}</span>'
-        f'<span class="hdr-pill-value">{fmt(m["vertical_oscillation_ratio"], 1)}%</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["vertical_oscillation_ratio"], 1)}%</span>'
         "</div>"
         "</div>"
         "</div>",
@@ -1724,11 +1812,13 @@ if results_with_metrics:
                 if _dke_clicked:
                     from pipeline_runner import run_full_analysis
 
-                    full_progress = st.progress(0, text="Preparing video…")
+                    full_progress = st.progress(0, text="Preparing video… (0%)")
 
                     # Same per-frame reporting as the upload page's bar, so only
                     # rerender when the rendered text would change (see the note
-                    # on upload.py's _fast_progress).
+                    # on upload.py's _fast_progress). Text carries the percentage
+                    # too, matching that bar - it previously showed only the
+                    # stage label, with no numeric progress at all.
                     _full_last = {"pct": -1, "stage": ""}
 
                     def _full_progress(stage, frac, _p=full_progress, _last=_full_last):
@@ -1736,7 +1826,7 @@ if results_with_metrics:
                         if pct == _last["pct"] and stage == _last["stage"]:
                             return
                         _last["pct"], _last["stage"] = pct, stage
-                        _p.progress(pct, text=stage)
+                        _p.progress(pct, text=f"{stage} ({pct}%)")
 
                     runner_info = r.get("runner_info") or {}
                     try:
@@ -1760,7 +1850,9 @@ if results_with_metrics:
                             # sets up is rendered by this same fragment, and
                             # nothing outside it depends on this flag.
                             r["full_analysis_excluded"] = True
-                            full_progress.progress(100, text="Tracking lost mid-run")
+                            full_progress.progress(
+                                100, text="Tracking lost mid-run (100%)"
+                            )
                             st.rerun()
                         else:
                             from src.preprocessing.nn_preprocessing import (
@@ -1789,7 +1881,7 @@ if results_with_metrics:
                             )
                             r["strike_pattern_full"] = full_analysis.clip_strike_pattern
                             r["analysis_full"] = full_analysis
-                            full_progress.progress(100, text="Complete!")
+                            full_progress.progress(100, text="Complete! (100%)")
                             # App-scoped, not the fragment default: Calculated
                             # Metrics, the Agreement note, Elite Range
                             # Comparison, Pace Analysis and Cross-Run
@@ -1799,7 +1891,7 @@ if results_with_metrics:
                     except (
                         Exception
                     ) as e:  # noqa: BLE001 - surface any pipeline failure
-                        full_progress.progress(100, text="Failed")
+                        full_progress.progress(100, text="Failed (100%)")
                         st.error(f"Second check failed: {e}")
 
     _render_dke_section(r, m, m_fast)
@@ -1960,15 +2052,15 @@ if len(results_with_metrics) >= 2:
         run_lbl = f"Run {i + 1}"
         rows += (
             f"<tr>"
-            f'<td class="pace-col"><strong>{run_lbl}</strong><br>'
+            f'<td class="pace-col" data-label="Run"><strong>{run_lbl}</strong><br>'
             f'<span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);">'
             f"{r['video_name']}</span></td>"
-            f"<td>{fmt(m['cadence_spm'], 0)} spm</td>"
-            f"<td>{fmt(m['gct_ms'], 0)} ms</td>"
-            f"<td>{fmt(m['stride_length_m'], 2)} m</td>"
-            f"<td>{fmt(m['oscillation_cm'], 1)} cm</td>"
-            f"<td>{fmt(m['velocity_kmh'], 1)} km/h</td>"
-            f"<td>{fmt(m['duty_factor'], 2)}</td>"
+            f'<td data-label="Cadence">{fmt(m["cadence_spm"], 0)} spm</td>'
+            f'<td data-label="GCT">{fmt(m["gct_ms"], 0)} ms</td>'
+            f'<td data-label="Stride">{fmt(m["stride_length_m"], 2)} m</td>'
+            f'<td data-label="Oscillation">{fmt(m["oscillation_cm"], 1)} cm</td>'
+            f'<td data-label="Speed">{fmt(m["velocity_kmh"], 1)} km/h</td>'
+            f'<td data-label="Duty Factor">{fmt(m["duty_factor"], 2)}</td>'
             f"</tr>"
         )
 

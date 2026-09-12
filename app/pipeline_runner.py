@@ -250,21 +250,38 @@ def run_full_analysis(
     ``run_fast_path`` above still takes a live ``pace_level`` -- that is the
     NN's FiLM conditioning input and is unrelated."""
     from src.preprocessing.pipeline import run_clip_pipeline
-    from src.preprocessing.rtmpose_extractor import extract_rtmpose_landmarks
+    from src.preprocessing.rtmpose_extractor import (
+        detect_device,
+        extract_rtmpose_landmarks,
+    )
 
     cfr_path, _ = ensure_cfr(video_path)
     proc_path, _ = cap_frames(cfr_path, MAX_PIPELINE_FRAMES)
 
+    # RTMPose gets 91% of the bar's width, not the 55% a straight read of
+    # this function's two stages might suggest. Measured on two real clips
+    # on CPU-tier hardware: RTMPose 259.6s/284.6s (91.2%) and 270.9s/298.3s
+    # (90.8%) of total wall-clock, against 25-27s for the rest of this
+    # function. The previous 0.05/0.40/0.55 split was never measured and had
+    # it backwards, allotting the slower phase less than half the bar - the
+    # bar would crawl through its first 45% for several minutes, then race
+    # through the remaining 55% in seconds. On GPU-tier hardware RTMPose is
+    # far faster (~15s/clip measured locally via
+    # scripts/rtmpose/extract_landmarks.py --device cuda) so this split is
+    # CPU-tier-calibrated and will look front-loaded on GPU; not worth a
+    # second calibration pass for a phase that becomes a non-issue.
     def _rtm_progress(done, total, _p=progress):
         if _p is not None:
             frac = (done / total) if total else 0.0
-            _p(f"RTMPose pose estimation… frame {done}/{total}", 0.05 + frac * 0.40)
+            _p(f"RTMPose pose estimation… frame {done}/{total}", 0.02 + frac * 0.90)
 
-    rtm = extract_rtmpose_landmarks(proc_path, device="cpu", progress=_rtm_progress)
+    rtm = extract_rtmpose_landmarks(
+        proc_path, device=detect_device(), progress=_rtm_progress
+    )
 
     def _pipe_progress(stage, frac, _p=progress):
         if _p is not None:
-            _p(stage, 0.45 + frac * 0.55)
+            _p(stage, 0.92 + frac * 0.08)
 
     return run_clip_pipeline(
         proc_path,

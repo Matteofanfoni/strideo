@@ -16,17 +16,41 @@ RTMPose runs through rtmlib's ONNX backend; on the CPU host this is plain
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
 import cv2
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 # COCO-WholeBody body keypoint indices (0-16), used to pick the runner among
 # any background detections by highest mean body-keypoint confidence.
 _BODY_KP_INDICES: List[int] = list(range(17))
 
 ProgressCallback = Callable[[int, int], None]
+
+
+def detect_device() -> str:
+    """ "cuda" if onnxruntime has a working CUDA execution provider, else "cpu".
+
+    Lets the live app pick GPU when deployed on GPU-tier hardware and fall
+    back to CPU on CPU-tier hardware, from the SAME image/requirements
+    (``onnxruntime-gpu`` registers both providers and simply omits CUDA when
+    its runtime libs aren't present — this is what makes the fallback
+    automatic rather than something that needs re-wiring per deploy target).
+    Scripts that already pass an explicit ``device=`` (dataset prep, analysis
+    scripts, tests) are unaffected; this is only for callers that want the
+    live-hardware answer.
+    """
+    import onnxruntime as ort
+
+    device = (
+        "cuda" if "CUDAExecutionProvider" in ort.get_available_providers() else "cpu"
+    )
+    logger.info("RTMPose device auto-detected: %s", device)
+    return device
 
 
 @dataclass

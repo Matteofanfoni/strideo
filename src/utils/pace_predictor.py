@@ -100,7 +100,14 @@ def parse_time_to_seconds(text: str) -> Optional[float]:
     """Parse a race time into seconds.
 
     Accepts ``"58.5"`` (seconds), ``"1:58.5"`` (min:sec), ``"14:30"``
-    (min:sec) and ``"1:02:30"`` (h:min:sec). Returns ``None`` if the string
+    (min:sec) and ``"1:02:30"`` (h:min:sec), colon-separated. Also accepts
+    the same shapes written with dots instead of colons (``"2.00.32"``,
+    common in European race-timing notation) - but a text with exactly ONE
+    dot and no colon stays a plain decimal-seconds value (``"58.5"``), since
+    that reading is already established and a single dot is ambiguous
+    between "minutes.seconds" and "seconds.fraction". Two or more dots is
+    unambiguous: only the last one can be the sub-second decimal point, so
+    every earlier dot is a field separator. Returns ``None`` if the string
     is empty or malformed.
 
     Args:
@@ -112,6 +119,9 @@ def parse_time_to_seconds(text: str) -> Optional[float]:
     text = (text or "").strip()
     if not text:
         return None
+    if ":" not in text and text.count(".") >= 2:
+        whole_fields, _, fraction = text.rpartition(".")
+        text = whole_fields.replace(".", ":") + "." + fraction
     try:
         parts = [float(p) for p in text.split(":")]
     except ValueError:
