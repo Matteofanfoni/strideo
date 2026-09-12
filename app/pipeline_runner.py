@@ -258,30 +258,33 @@ def run_full_analysis(
     cfr_path, _ = ensure_cfr(video_path)
     proc_path, _ = cap_frames(cfr_path, MAX_PIPELINE_FRAMES)
 
-    # RTMPose gets 91% of the bar's width, not the 55% a straight read of
-    # this function's two stages might suggest. Measured on two real clips
-    # on CPU-tier hardware: RTMPose 259.6s/284.6s (91.2%) and 270.9s/298.3s
-    # (90.8%) of total wall-clock, against 25-27s for the rest of this
-    # function. The previous 0.05/0.40/0.55 split was never measured and had
-    # it backwards, allotting the slower phase less than half the bar - the
-    # bar would crawl through its first 45% for several minutes, then race
-    # through the remaining 55% in seconds. On GPU-tier hardware RTMPose is
-    # far faster (~15s/clip measured locally via
-    # scripts/rtmpose/extract_landmarks.py --device cuda) so this split is
-    # CPU-tier-calibrated and will look front-loaded on GPU; not worth a
-    # second calibration pass for a phase that becomes a non-issue.
-    def _rtm_progress(done, total, _p=progress):
+    # RTMPose's share of the bar depends on which device it actually runs
+    # on - a single fixed split can't be right for both, since GPU doesn't
+    # just make RTMPose faster, it changes which of the two phases
+    # dominates. Measured on real clips both ways: CPU-tier 259.6s/284.6s
+    # (91.2%) and 270.9s/298.3s (90.8%) of total wall-clock; GPU-tier
+    # (once CUDA actually initialized) 21s/52s (~40%) on one clip -
+    # the rest of this function (contact detection, the classical engine)
+    # barely benefits from GPU at all, so it goes from a rounding error at
+    # CPU tier to the majority of the wall-clock at GPU tier. The previous
+    # single CPU-calibrated split (0.92/0.08) made the bar look badly
+    # front-loaded once GPU tier flipped which phase is slower.
+    device = detect_device()
+    rtm_end = 0.40 if device == "cuda" else 0.92
+
+    def _rtm_progress(done, total, _p=progress, _end=rtm_end):
         if _p is not None:
             frac = (done / total) if total else 0.0
-            _p(f"RTMPose pose estimation… frame {done}/{total}", 0.02 + frac * 0.90)
+            _p(
+                f"RTMPose pose estimation… frame {done}/{total}",
+                0.02 + frac * (_end - 0.02),
+            )
 
-    rtm = extract_rtmpose_landmarks(
-        proc_path, device=detect_device(), progress=_rtm_progress
-    )
+    rtm = extract_rtmpose_landmarks(proc_path, device=device, progress=_rtm_progress)
 
-    def _pipe_progress(stage, frac, _p=progress):
+    def _pipe_progress(stage, frac, _p=progress, _start=rtm_end):
         if _p is not None:
-            _p(stage, 0.92 + frac * 0.08)
+            _p(stage, _start + frac * (1.0 - _start))
 
     return run_clip_pipeline(
         proc_path,
