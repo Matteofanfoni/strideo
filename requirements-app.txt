@@ -28,6 +28,15 @@ onnxruntime-gpu[cuda,cudnn]==1.26.0   # RTMPose-x backend. Superset of plain
                                 # combination already validated locally on the
                                 # Legion RTX 5070 Ti (environment_rtmpose.yml):
                                 # onnxruntime-gpu 1.26.0 + cuDNN 9.x.
+nvidia-cublas-cu12~=12.0        # Fills a real gap in onnxruntime-gpu's own
+                                # [cuda]/[cudnn] extras: confirmed via its
+                                # METADATA that neither declares this, yet
+                                # the CUDA execution provider dlopens
+                                # libcublasLt.so.12 directly and fails to
+                                # load without it (observed live on HF:
+                                # "Failed to create CUDAExecutionProvider"
+                                # -> silent CPU fallback, no crash). CPU-tier
+                                # deploys install this harmlessly unused.
 rtmlib>=0.0.15                  # thin RTMPose wrapper (pure-python, 61 KB).
                                 # Its own METADATA unconditionally requires
                                 # plain `onnxruntime` too, which installs
