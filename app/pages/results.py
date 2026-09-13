@@ -1777,25 +1777,46 @@ if results_with_metrics:
                 if m_fast is not None:
                     _render_metric_comparison_charts(m_fast, m, r["video_name"])
             else:
-                if r.get("full_analysis_excluded"):
-                    st.warning(
-                        "The deterministic kinematics engine could not produce a "
-                        "trustworthy result for this clip: the runner's hips and "
-                        "ankles were lost for a stretch of frames while they were "
-                        "still crossing the shot, so part of the run was never "
-                        "measured. No second-check numbers are shown for this "
-                        "clip. Re-filming with the runner fully in frame and "
-                        "unobstructed throughout usually fixes it."
+                # `analysis` (aliasing `analysis_full`, a ClipAnalysis) is not
+                # JSON-serializable, so "Save results" drops it and a
+                # re-imported clip always lands here even when the engine
+                # genuinely ran: `has_full_analysis` (built from the
+                # JSON-safe `metrics_full`) is the field that survives the
+                # round trip and tells the two cases apart.
+                _reimported_with_engine = r.get("has_full_analysis", False)
+                if _reimported_with_engine:
+                    st.info(
+                        "The deterministic kinematics engine already ran for "
+                        "this clip - its numbers are shown above, source-"
+                        "labeled. Contact-by-contact detail isn't saved in a "
+                        "results file, so it can't be shown here. Run it "
+                        "again on this video to see it."
                     )
-                st.markdown(
-                    '<p class="section-sub">Run the deterministic kinematics '
-                    "engine, a second, independent computer-vision method "
-                    "(RTMPose-x + per-contact detection), to see how closely it "
-                    "agrees with StrideoNet's result above, and to get contact-by-"
-                    "contact timing and strike-pattern detection for every "
-                    "footstrike.</p>",
-                    unsafe_allow_html=True,
-                )
+                    if m_fast is not None:
+                        _render_metric_comparison_charts(m_fast, m, r["video_name"])
+                else:
+                    if r.get("full_analysis_excluded"):
+                        st.warning(
+                            "The deterministic kinematics engine could not "
+                            "produce a trustworthy result for this clip: the "
+                            "runner's hips and ankles were lost for a "
+                            "stretch of frames while they were still "
+                            "crossing the shot, so part of the run was never "
+                            "measured. No second-check numbers are shown for "
+                            "this clip. Re-filming with the runner fully in "
+                            "frame and unobstructed throughout usually fixes "
+                            "it."
+                        )
+                    st.markdown(
+                        '<p class="section-sub">Run the deterministic '
+                        "kinematics engine, a second, independent computer-"
+                        "vision method (RTMPose-x + per-contact detection), "
+                        "to see how closely it agrees with StrideoNet's "
+                        "result above, and to get contact-by-contact timing "
+                        "and strike-pattern detection for every "
+                        "footstrike.</p>",
+                        unsafe_allow_html=True,
+                    )
                 # A bare st.button() with no column around it shrink-wraps to its
                 # own content instead of the page width, so the shared button CSS's
                 # `width: 100%` had nothing real to fill - text sat flush against
@@ -1805,7 +1826,11 @@ if results_with_metrics:
                 _dke_btn_col, _ = st.columns([1, 2])
                 with _dke_btn_col:
                     _dke_clicked = st.button(
-                        "Run in-depth analysis",
+                        (
+                            "Re-run in-depth analysis"
+                            if _reimported_with_engine
+                            else "Run in-depth analysis"
+                        ),
                         key=f"full_analysis_{r['video_name']}",
                         use_container_width=True,
                     )
