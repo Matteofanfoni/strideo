@@ -584,14 +584,39 @@ inject_page_css("""
      which a grid container ignores. Video Information needs its own copy of
      this: a media query does not raise specificity, so its own rules would
      otherwise keep winning and squeeze its values into ~70px of content
-     width on a phone. It keeps the 48-track grid and restates the spans
-     instead, since that is what its row layout is built on - two boxes a
-     row, with the file name full width. */
+     width on a phone. Video Information gets its own copy further down, at
+     matching specificity. The row layout it is built on is unchanged - two
+     boxes a row, with the file name full width - but it is now stated in
+     two tracks rather than as spans of forty-eighths; see the gap-floor
+     note on that rule for why the 48-track grid could not stay. */
   .hdr-strip{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* An odd-numbered strip leaves its last card beside an empty half-slot -
+     seen on the Contact Tracker's three pills (user, 2026-09-20). The last
+     card spans the row instead. `:last-child:nth-child(odd)` is what makes
+     this self-adjusting: both have to hold, so it fires only when the count
+     is genuinely odd, leaves an even strip alone, and needs no new rule when
+     a strip gains or loses a card. Video Information is unaffected twice
+     over - twelve pills is even, and its own `span 1` rules outrank this. */
+  .hdr-strip > .hdr-pill:last-child:nth-child(odd){ grid-column: 1 / -1; }
   /* Back into normal flow below the breakpoint: the columns stack here, so
      there is no video height to match and an out-of-flow strip would sit in
-     a zero-height container and overlap whatever follows. */
+     a zero-height container and overlap whatever follows.
+
+     TWO selectors, and the second is the whole point. The out-of-flow rule
+     above is gated on :has(.res-vidframe-mark), so it carries one more
+     :has() than the vinfo-panel-mark selector alone and outranks it - and a
+     media query adds NO specificity, so with only the first selector here
+     the desktop rule kept winning on a phone and the strip stayed
+     position:absolute inset:0 over the video, dropping all twelve pills on
+     top of it (user-reported on a real iPhone, 2026-09-20). Restating the
+     video-gated selector ties the specificity and wins on source order,
+     exactly as the grid-template-columns note above does for the same
+     reason. Both selectors are kept: the first still carries the no-video
+     case, which has its own margin and must not lose it. `inset` needs no
+     reset - it does nothing on a static box. */
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .vinfo-panel-mark)
+    .hdr-strip,
+  [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .vinfo-panel-mark):has(.res-vidframe-mark)
     .hdr-strip{
     position: static;
     /* 1fr, not minmax(0, 1fr): with no video to match there is no height to
@@ -600,16 +625,69 @@ inject_page_css("""
     grid-auto-rows: 1fr;
     margin: 4px 0 20px;
   }
+  /* TWO tracks on a phone, not the desktop 48, and this is what stops the
+     strip being wider than the screen. Tracks are minmax(0, 1fr) and do
+     collapse to zero, but the 12px gap between them does not: 47 gaps put a
+     hard 564px floor under a grid sitting in roughly 350px of viewport, so
+     the pills could not wrap to the window and the whole page scrolled
+     sideways (user-reported on a real iPhone, 2026-09-20). Restating the
+     spans in forty-eighths, which is what this block used to do, cannot fix
+     that at any span value - the gap count comes from the TRACK count alone.
+     Needs the vinfo-panel selector rather than a bare .hdr-strip, because
+     the desktop 48-track rule carries it and would otherwise outrank a plain
+     class: the same specificity trap as the position rule above. */
+  [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .vinfo-panel-mark)
+    .hdr-strip{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .vinfo-panel-mark)
     .hdr-pill.w11,
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .vinfo-panel-mark)
     .hdr-pill.w13,
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .vinfo-panel-mark)
-    .hdr-pill.w16{ grid-column: span 24; }
+    .hdr-pill.w16,
+  /* w24 (file name, resolution) drops to one track too, so EVERY pill is one
+     track and the twelve fill six complete rows. Spanning both, which is what
+     the desktop layout does and what this block did first, left a hole beside
+     `date`: `file` is the next pill and cannot fit in the remaining half, so
+     it wrapped and abandoned the slot (user, 2026-09-20: "cards are fixed but
+     not even"). `grid-auto-flow: dense` would backfill that hole, but only by
+     pulling a later pill forward and reordering the strip the user specified.
+     A half-track file name is safe: `.hdr-pill-value` sets
+     `overflow-wrap: anywhere`, so a long name wraps inside its own box rather
+     than widening the track. */
   [data-testid="stVerticalBlock"]:has(> [data-testid="stElementContainer"] .vinfo-panel-mark)
-    .hdr-pill.w24{ grid-column: span 48; }
+    .hdr-pill.w24{ grid-column: span 1; }
   .range-row{ grid-template-columns: 1fr; gap: 4px; }
   .range-verdict{ text-align: left; }
+  /* Tooltips re-anchor to their pill on a phone, and this is what stops the
+     page sliding sideways. `.info-tip::after` is width:max-content up to
+     240px, absolutely positioned and centred on a 13px "?", and hidden with
+     `visibility: hidden` rather than `display: none` - so it still counts
+     toward scrollable overflow while invisible. Inside a half-width pill in
+     the right-hand column it stuck out far past the screen, propagated up
+     through .hdr-pill and .stMarkdown, and left `section[stMain]` scrolling
+     65px horizontally. That inner scroll is the "page moves left and right"
+     report: the DOCUMENT never overflowed (scrollWidth stayed at the 402px
+     viewport), which is why a document-level check called it clean twice.
+     Measured on the user's own iPhone, 2026-09-20, by suppressing just this
+     pseudo-element and re-measuring: worst inner overflow 102px -> 9px.
+     Making `.info-tip` static hands the ::after's containing block to the
+     pill, so left:0/right:0 span the pill and it cannot stick out at all.
+     Scoped to the two containers that actually hold tips: a bare
+     `.info-tip{position:static}` would re-anchor any future tip to whatever
+     distant ancestor happened to be positioned. */
+  .hdr-pill, .range-row{ position: relative; }
+  .hdr-pill .info-tip, .range-row .info-tip{ position: static; }
+  .hdr-pill .info-tip::after, .range-row .info-tip::after{
+    left: 0;
+    right: 0;
+    transform: none;
+    width: auto;
+    max-width: none;
+  }
+  /* Belt and braces for any tip added outside those two containers: cap it
+     to the viewport instead of a fixed 240px. Lower specificity than the
+     rule above, so it does not fight it. */
+  .info-tip::after{ max-width: min(240px, calc(100vw - 40px)); }
   /* Both .compare-table users (Contact Tracker, Cross-Run Comparison) carry
      6-7 columns - too many to fit, and a horizontally-scrolling table hides
      most of the row with no visible affordance that more content exists
