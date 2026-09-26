@@ -945,6 +945,21 @@ def _std_sub_pill(value, decimals, unit):
     return f'<span class="hdr-pill-label">± {fmt(value, decimals)} {unit}</span>'
 
 
+def _std_pdf_cell(value, decimals, unit):
+    """The PDF report's "+/- Std" cell, the same rule as `_std_sub_pill`:
+    empty when there is no measured spread (StrideoNet's NaN), never
+    "+/- N/A". The PDF builds its own copy of the metrics table, so the
+    page's fix did not reach it."""
+    if value is None:
+        return ""
+    try:
+        if math.isnan(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return f"+/- {fmt(value, decimals)} {unit}"
+
+
 def quality_color(value, good=0.7, ok=0.4):
     """Return CSS color based on quality level."""
     if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -2312,6 +2327,9 @@ def _generate_pdf(results_data):
         spaceBefore=8,
         spaceAfter=3,
     )
+    # Table cells are plain strings and never wrap; long text goes in a
+    # Paragraph with this style so it wraps inside its column instead.
+    cell_wrap = _style("CellWrap", fontSize=9, textColor=DARK, leading=11)
 
     def _hr(thick=1, color=BORDER, before=4, after=4):
         return HRFlowable(
@@ -2532,19 +2550,19 @@ def _generate_pdf(results_data):
             [
                 "Cadence",
                 f"{fmt(m['cadence_spm'], 0)} spm",
-                f"+/- {fmt(m['cadence_std'], 1)} spm",
+                _std_pdf_cell(m["cadence_std"], 1, "spm"),
                 "",
             ],
             [
                 "Ground Contact Time",
                 f"{fmt(m['gct_ms'], 0)} ms",
-                f"+/- {fmt(m['gct_std'], 1)} ms",
+                _std_pdf_cell(m["gct_std"], 1, "ms"),
                 "",
             ],
             [
                 "Stride Length",
                 f"{fmt(m['stride_length_m'], 2)} m",
-                f"+/- {fmt(m['stride_length_std'], 2)} m",
+                _std_pdf_cell(m["stride_length_std"], 2, "m"),
                 "",
             ],
             [
@@ -2566,10 +2584,15 @@ def _generate_pdf(results_data):
                 "Vertical Oscillation Ratio",
                 f"{fmt(m['vertical_oscillation_ratio'], 1)}%",
                 "",
-                "of step length; lower = less vertical motion",
+                Paragraph("of step length; lower = less vertical motion", cell_wrap),
             ],
         ]
         cw = [CONTENT_W * f for f in (0.36, 0.24, 0.22, 0.18)]
+        if not any(row[2] for row in metrics_rows[1:]):
+            # No spread to report at all (a StrideoNet result): drop the
+            # column rather than print an empty "+/- Std" header over it.
+            metrics_rows = [[a, b, d] for a, b, _, d in metrics_rows]
+            cw = [CONTENT_W * f for f in (0.36, 0.30, 0.34)]
         elements.append(_data_table(metrics_rows, cw))
 
         m_fast_pdf = r.get("metrics_fast")
