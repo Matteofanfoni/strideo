@@ -437,3 +437,38 @@ def get_elite_ranges(
     if height_cm:
         return _tier_table(pace_level, sex, stature)
     return _TIERS[pace_level][sex]
+
+
+def elite_verdict(value: float, lo: float, hi: float, unit: str) -> Tuple[int, str]:
+    """Decimals to display `value` with, and its verdict against [lo, hi].
+
+    Computed together so the shown value and the verdict cannot contradict
+    each other. Band edges print with ``:g`` (0.246, 168.4,
+    159), and the value used to print at a fixed 2 decimals for unitless
+    metrics while the verdict compared the unrounded value, so a duty factor
+    of ~0.2455 read "0.25 - below range" beside a band of "0.246-0.286". The
+    value is now shown at least as precisely as the band edges, and the
+    verdict is decided on the number actually shown.
+
+    Args:
+        value: the runner's metric value.
+        lo: band lower edge.
+        hi: band upper edge.
+        unit: the metric's unit; empty for unitless metrics (duty factor).
+
+    Returns:
+        (decimals, verdict), verdict one of "below range", "in range",
+        "above range".
+    """
+
+    def _decimals(x: float) -> int:
+        s = f"{x:g}"
+        return len(s.split(".")[1]) if "." in s and "e" not in s else 0
+
+    decimals = max(2 if not unit else 1, _decimals(lo), _decimals(hi))
+    shown = round(value, decimals)
+    if shown < lo:
+        return decimals, "below range"
+    if shown > hi:
+        return decimals, "above range"
+    return decimals, "in range"

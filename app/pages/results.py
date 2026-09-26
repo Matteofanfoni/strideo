@@ -28,6 +28,7 @@ from src.utils.vo_correction import (  # noqa: E402
 from utils.elite_reference import (  # noqa: E402
     METRICS,
     TIER_LABELS,
+    elite_verdict,
     get_elite_ranges,
 )
 
@@ -2001,6 +2002,13 @@ if results_with_metrics:
 
     # ── Elite Range Comparison (pace-tier + sex aware) ──
     _er_runner_info = r.get("runner_info") or {}
+    # Always StrideoNet's result, never the engine's. `m` switches to
+    # metrics_full once Full Analysis has run, and this section used to
+    # follow it silently, so one page stated two "actual" speeds: on one real
+    # clip StrideoNet's 24.4 km/h above and the engine's 21.8 km/h here,
+    # against a hand-measured 24.7. The Calculated Metrics section follows
+    # the same rule; the engine keeps its own comparison charts above.
+    _er_m = _cross_clip_metrics(r)
     # Bands are built at the clip's own measured speed where one is
     # available, not at the declared tier's nominal speed. The tier is a
     # label the runner picked before running; every metric in the band
@@ -2009,7 +2017,7 @@ if results_with_metrics:
     _er_ranges = get_elite_ranges(
         r.get("pace_level"),
         _er_runner_info.get("sex"),
-        _safe_float(m.get("velocity_kmh"), None),
+        _safe_float(_er_m.get("velocity_kmh"), None),
         _safe_float(_er_runner_info.get("height_cm"), None),
     )
     if _er_ranges is None:
@@ -2037,8 +2045,8 @@ if results_with_metrics:
         if _er_by_speed:
             _er_basis_copy = (
                 f"built for elite {_er_sex_label} middle-distance runners at "
-                f"the {_safe_float(m.get('velocity_kmh')):.1f} km/h you actually "
-                f"ran, not at a nominal {_er_tier_label} pace"
+                f"the {_safe_float(_er_m.get('velocity_kmh')):.1f} km/h you "
+                f"actually ran, not at a nominal {_er_tier_label} pace"
             )
         else:
             _er_basis_copy = (
@@ -2049,8 +2057,8 @@ if results_with_metrics:
                 "these bands, so read them loosely"
             )
         st.markdown(
-            f'<p class="section-sub">Your metrics against indicative reference '
-            f"ranges {_er_basis_copy}. The bands span roughly 95% of elite "
+            f'<p class="section-sub">StrideoNet\'s result against indicative '
+            f"reference ranges {_er_basis_copy}. The bands span roughly 95% of elite "
             "runners, so they are wide on purpose - orientation, not a "
             "pass/fail.</p>",
             unsafe_allow_html=True,
@@ -2064,11 +2072,16 @@ if results_with_metrics:
         bars = []
         for key, name in METRICS:
             rng = _er_ranges[key]
-            val = _safe_float(m.get(key))
+            val = _safe_float(_er_m.get(key))
             bars.append((name, rng.unit, val, (rng.lo, rng.hi), rng.modeled))
 
         rows_html = []
         for name, unit, val, (lo, hi), modeled in bars:
+            # Number, verdict and marker all use the value as shown: a marker
+            # placed on the unrounded value sat just outside a band
+            # its own row called "in range".
+            val_decimals, verdict = elite_verdict(val, lo, hi, unit)
+            val = round(val, val_decimals)
             disp_lo = min(lo, val)
             disp_hi = max(hi, val)
             pad = (disp_hi - disp_lo or 1.0) * 0.15
@@ -2078,10 +2091,6 @@ if results_with_metrics:
             band_left = (lo - disp_lo) / span * 100
             band_w = (hi - lo) / span * 100
             mark = max(0.0, min(100.0, (val - disp_lo) / span * 100))
-            verdict = (
-                "below range" if val < lo else "above range" if val > hi else "in range"
-            )
-            val_decimals = 2 if not unit else 1
             scale_fmt = (
                 "{:.2f}" if disp_hi < 1 else "{:.1f}" if disp_hi < 20 else "{:.0f}"
             )
@@ -2592,11 +2601,13 @@ def _generate_pdf(results_data):
         # Information above instead; Mean Visibility/NN Windows Used dropped.
 
         # ── Elite Range Comparison (pace-tier + sex aware) ──
+        # StrideoNet's result always, as on the live page.
+        _pdf_m = _cross_clip_metrics(r)
         _pdf_runner_info = r.get("runner_info") or {}
         _pdf_ranges = get_elite_ranges(
             r.get("pace_level"),
             _pdf_runner_info.get("sex"),
-            _safe_float(m.get("velocity_kmh"), None),
+            _safe_float(_pdf_m.get("velocity_kmh"), None),
             _safe_float(_pdf_runner_info.get("height_cm"), None),
         )
         if _pdf_ranges is None:
@@ -2616,7 +2627,7 @@ def _generate_pdf(results_data):
             # claim a tier band was a measured-speed one or the reverse.
             if any(rng.basis == "speed" for rng in _pdf_ranges.values()):
                 _pdf_basis_copy = (
-                    f"at the {_safe_float(m.get('velocity_kmh')):.1f} km/h "
+                    f"at the {_safe_float(_pdf_m.get('velocity_kmh')):.1f} km/h "
                     "actually run, not at a nominal "
                     f"{_pdf_tier_label} pace"
                 )
@@ -2628,7 +2639,8 @@ def _generate_pdf(results_data):
                 )
             elements.append(
                 Paragraph(
-                    f"Indicative reference ranges for elite {_pdf_sex_label} "
+                    "StrideoNet's result against indicative reference ranges "
+                    f"for elite {_pdf_sex_label} "
                     f"middle-distance runners {_pdf_basis_copy}. The bands span "
                     "roughly 95% of elite runners - orientation, not a pass/fail.",
                     note,
@@ -2639,21 +2651,14 @@ def _generate_pdf(results_data):
                 rng = _pdf_ranges[key]
                 unit = rng.unit
                 lo, hi = rng.lo, rng.hi
-                val = _safe_float(m.get(key))
-                val_decimals = 2 if not unit else 1
+                val = _safe_float(_pdf_m.get(key))
                 unit_suffix = f" {unit}" if unit else ""
-                val_str = (
-                    f"{val:.{val_decimals}f}{unit_suffix}" if val is not None else "-"
-                )
                 range_str = f"{lo:g}-{hi:g}{unit_suffix}"
                 if val is None:
-                    verdict = "-"
-                elif val < lo:
-                    verdict = "below range"
-                elif val > hi:
-                    verdict = "above range"
+                    val_str, verdict = "-", "-"
                 else:
-                    verdict = "in range"
+                    val_decimals, verdict = elite_verdict(val, lo, hi, unit)
+                    val_str = f"{val:.{val_decimals}f}{unit_suffix}"
                 if rng.modeled:
                     verdict += " (modeled)"
                 range_rows.append([name, val_str, range_str, verdict])
