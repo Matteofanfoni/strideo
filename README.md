@@ -22,25 +22,32 @@ the clip, and get four gait metrics back, with no lab hardware and no wearable.
 ## What it measures
 
 Cadence, ground contact time, stride length and vertical oscillation, plus duty
-factor. The app compares each result against published elite reference bands for
-the pace you recorded at, and exports a PDF report.
+factor. The app compares each result against elite reference bands drawn from
+the published literature, built at the speed you actually ran, and exports a PDF
+report.
 
-The bands are pace-tier and sex specific. For 800 m:
+The bands are sex specific, and they follow the measured speed rather than a
+nominal pace because every one of these metrics moves with speed. At 26 km/h,
+roughly 800 m race pace:
 
 | Metric | Unit | Elite male | Elite female |
 |---|---|---|---|
-| Cadence | steps/min | 200 – 220 | 205 – 230 |
-| Ground contact time | ms | 130 – 150 | 140 – 155 |
-| Stride length | m | 4.20 – 4.90 | 3.80 – 4.20 |
-| Vertical oscillation | cm | 5.8 – 6.8 \* | 6.1 – 6.8 \* |
-| Duty factor | | 0.22 – 0.26 | 0.25 – 0.28 |
+| Cadence | steps/min | 182.6 – 218.6 | 198.7 – 234.7 |
+| Ground contact time | ms | 133.8 – 181.8 | 118.0 – 166.0 |
+| Stride length | m | 4.00 – 4.64 | 3.57 – 4.21 |
+| Vertical oscillation | cm | 3.96 – 9.72 \* | 3.14 – 8.58 \* |
+| Duty factor | | 0.243 – 0.283 | 0.243 – 0.283 |
 
 \* Extrapolated rather than measured. No whole-cycle vertical oscillation
 measurement exists above 22 km/h in any published population, so the 800 m and
 1500 m oscillation bands are modelled, and the app labels them as such.
 
-The app carries equivalent bands for 1500 m and threshold pace, all of them
-merged from 16 primary sources. Strideo targets middle-distance runners because
+Each band is two standard deviations of the spread between elite athletes, so
+the bands are wide on purpose. They are modelled estimates drawn from 16 primary
+sources, not Strideo measurements, and they are for orientation, not targets or
+a diagnosis. The 800 m tier is the weakest evidence behind them: none of the 16
+sources measured a cohort of elite men at 800 m race pace, and two of them are
+not peer-reviewed. Strideo targets middle-distance runners because
 800 m and 1500 m form changes with effort: cadence, contact time and stride
 length all shift as a runner moves from threshold toward race pace, and most
 consumer tools average that shift away.
@@ -55,14 +62,18 @@ consumer tools average that shift away.
    tracks 33 body landmarks per frame and calibrates real-world scale from the
    runner's own height.
 3. **StrideoNet.** A FiLM pace-conditioned 2D CNN (~277K parameters) reads those
-   landmarks directly and predicts all four metrics, without running a second
-   pose model and without detecting individual footstrikes. It produces the
+   landmarks directly and predicts cadence, ground contact time and vertical
+   oscillation, without running a second pose model and without detecting
+   individual footstrikes. Stride length follows from the predicted cadence and
+   the measured speed. It produces the
    app's default result, and runs roughly 6x faster than the path below because
    it skips the second pose model.
 4. **Deterministic kinematics engine** (opt-in). RTMPose-x adds high-precision
    hip and ankle landmarks, and a rules-based engine detects initial contact and
-   toe-off per footstrike from ankle vertical velocity. It also classifies
-   forefoot against heel strike. Triggered per result with **Run Full Analysis**,
+   toe-off per footstrike from leg compression, the vertical hip-to-ankle
+   distance, which cancels the camera's own movement because that shifts hip
+   and ankle together. It also classifies
+   forefoot against heel strike. Triggered per result with **Run in-depth analysis**,
    and reported alongside the fast estimate rather than replacing it.
 
 ---
@@ -94,9 +105,11 @@ Both clear the target, though the two figures rest on different footing:
   are the hard ones.
 - StrideoNet's figure is held out runner by runner. The engine's is not.
 
-**Cadence** comes out clean: a scored-set residual of -0.75%, with 37 of 43
-clips inside ±2%. **Stride length** reads about 2.6% low, consistently rather
-than randomly, so it carries a known small bias. **Vertical oscillation** is the
+**Cadence** comes out clean: a scored-set residual of +0.1%, with all 45 clips
+inside ±2%. That is the set matched to the annotation; the raw pipeline average
+is weaker. **Stride length** shows no significant bias across the cohort (about
+1% low, not significant with 5 runners), but single clips can be off by up to
+about 16%, so it is not a per-clip accuracy claim. **Vertical oscillation** is the
 least settled of the four. Its displayed value carries a correction fitted to
 the annotation, and much of the error left over is the annotation's own
 cycle-to-cycle spread rather than the estimator's, so no tolerance is claimed
