@@ -287,7 +287,7 @@ def encode_strideonet_video(
         f"Velocity : {metrics['velocity_ms']:.2f} m/s "
         f"({metrics['pace_per_km']}/km)",
         f"Flight   : {metrics['flight_time_ms']:.1f} ms   "
-        f"Duty: {metrics['duty_factor']:.2f}",
+        f"Duty: {metrics['duty_factor']:.3f}",
         f"VO ratio : {metrics['vertical_oscillation_ratio']:.1f} %",
         f"Cal      : conf={metrics['calibration_confidence']:.2f}",
     ]

@@ -1760,7 +1760,7 @@ if results_with_metrics:
         "</div>"
         '<div class="hdr-pill">'
         f'<span class="hdr-pill-label">Duty Factor{duty_tip}</span>'
-        f'<span class="hdr-pill-value">{fmt(m_display["duty_factor"], 2)}</span>'
+        f'<span class="hdr-pill-value">{fmt(m_display["duty_factor"], 3)}</span>'
         "</div>"
         "</div>"
         '<div class="hdr-strip">'
@@ -2187,7 +2187,7 @@ if len(results_with_metrics) >= 2:
             f'<td data-label="Stride">{fmt(m["stride_length_m"], 2)} m</td>'
             f'<td data-label="Oscillation">{fmt(m["oscillation_cm"], 1)} cm</td>'
             f'<td data-label="Speed">{fmt(m["velocity_kmh"], 1)} km/h</td>'
-            f'<td data-label="Duty Factor">{fmt(m["duty_factor"], 2)}</td>'
+            f'<td data-label="Duty Factor">{fmt(m["duty_factor"], 3)}</td>'
             f"</tr>"
         )
 
@@ -2572,7 +2572,7 @@ def _generate_pdf(results_data):
                 f"{osc_leg}x leg",
             ],
             ["Flight Time", f"{fmt(m['flight_time_ms'], 0)} ms", "", ""],
-            ["Duty Factor", fmt(m["duty_factor"], 2), "", ""],
+            ["Duty Factor", fmt(m["duty_factor"], 3), "", ""],
             [
                 "Speed",
                 f"{fmt(m['velocity_kmh'], 1)} km/h ({fmt(m['velocity_ms'], 2)} m/s)",
