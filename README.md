@@ -106,10 +106,11 @@ Both clear the target, though the two figures rest on different footing:
 - StrideoNet's figure is held out runner by runner. The engine's is not.
 
 **Cadence** comes out clean: a scored-set residual of +0.1%, with all 45 clips
-inside ±2%. That is the set matched to the annotation; the raw pipeline average
-is weaker. **Stride length** shows no significant bias across the cohort (about
-1% low, not significant with 5 runners), but single clips can be off by up to
-about 16%, so it is not a per-clip accuracy claim. **Vertical oscillation** is the
+inside ±2%. That is the set matched to the annotation. The raw average the
+engine reports without any annotation is +0.2%, with every clip inside ±5%.
+**Stride length** shows no significant bias across the cohort (about 0.5% low,
+not significant with 5 runners), but single clips can be off by up to about 6%,
+so it is not a per-clip accuracy claim. **Vertical oscillation** is the
 least settled of the four. Its displayed value carries a correction fitted to
 the annotation, and much of the error left over is the annotation's own
 cycle-to-cycle spread rather than the estimator's, so no tolerance is claimed
