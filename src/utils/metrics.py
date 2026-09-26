@@ -6,19 +6,38 @@ from typing import Dict, List, Optional, Tuple
 from scipy.ndimage import gaussian_filter1d
 
 from src.preprocessing.ground_contact import GroundContact, detect_ground_contacts
+from src.utils.contact_filter import deployable_filter, presence_window
 from src.preprocessing.calibration import SpatialCalibration, create_spatial_calibration
 from src.preprocessing.pose_estimator import LandmarkIndex
 
 
-def calculate_cadence(contacts: List[GroundContact], fps: float) -> Tuple[float, float]:
+def calculate_cadence(
+    contacts: List[GroundContact],
+    fps: float,
+    landmarks: Optional[np.ndarray] = None,
+) -> Tuple[float, float]:
     """
     Calculate cadence (steps per minute) from ground contacts.
 
     Uses sub-frame contact timing when available (from toe refinement).
 
+    With ``landmarks``, an interval counts only when **both** of its contacts
+    survive ``contact_filter.deployable_filter``: refined, both ends inside the
+    runner's presence window, not a within-clip duration outlier. That is the
+    GT-free half of the contact set validation scores cadence on. Without it,
+    exit-zone contacts whose timing fell back to the coarse frame were averaged
+    in, and read high: +1.88% cohort bias, +9.0% on ``S1_04_800m_2``.
+    Intervals are only ever taken between contacts adjacent in ``contacts``,
+    so dropping one removes its two intervals rather than merging them into a
+    double-length one. If that leaves fewer than two usable intervals, every
+    contact is used, as before. Of eleven GT-free rules compared on the S1
+    cohort, this one changed no clip for the worse.
+
     Args:
         contacts: List of ground contact events
         fps: Video frame rate
+        landmarks: The landmark array the presence window is computed from
+            (``compute_presence_quality``'s input). ``None`` uses every contact.
 
     Returns:
         cadence_spm: Mean cadence in steps per minute
@@ -26,6 +45,29 @@ def calculate_cadence(contacts: List[GroundContact], fps: float) -> Tuple[float,
     """
     if len(contacts) < 2:
         return np.nan, np.nan
+
+    if landmarks is not None:
+        kept = {
+            id(c)
+            for c in deployable_filter(contacts, presence_window(landmarks))["kept"]
+        }
+        keep = [id(c) in kept for c in contacts]
+        cadence_spm, cadence_std, n = _cadence_from_contacts(contacts, fps, keep)
+        if n >= 2:
+            return cadence_spm, cadence_std
+    cadence_spm, cadence_std, _ = _cadence_from_contacts(
+        contacts, fps, [True] * len(contacts)
+    )
+    return cadence_spm, cadence_std
+
+
+def _cadence_from_contacts(
+    contacts: List[GroundContact], fps: float, keep: List[bool]
+) -> Tuple[float, float, int]:
+    """``calculate_cadence``'s interval arithmetic over adjacent kept contacts.
+
+    Returns ``(cadence_spm, cadence_std, n_intervals_used)``.
+    """
 
     # Use refined contact_frame if available, otherwise fall back to coarse frame
     def get_contact_time(c: GroundContact) -> float:
@@ -38,6 +80,7 @@ def calculate_cadence(contacts: List[GroundContact], fps: float) -> Tuple[float,
         [
             get_contact_time(contacts[i + 1]) - get_contact_time(contacts[i])
             for i in range(len(contacts) - 1)
+            if keep[i] and keep[i + 1]
         ]
     )
 
@@ -47,7 +90,7 @@ def calculate_cadence(contacts: List[GroundContact], fps: float) -> Tuple[float,
     valid_mask = (intervals_frames > min_interval) & (intervals_frames < max_interval)
 
     if not np.any(valid_mask):
-        return np.nan, np.nan
+        return np.nan, np.nan, 0
 
     intervals_frames = intervals_frames[valid_mask]
 
@@ -68,7 +111,7 @@ def calculate_cadence(contacts: List[GroundContact], fps: float) -> Tuple[float,
     cadence_spm = float(np.mean(steps_per_second) * 60)
     cadence_std = float(np.std(steps_per_second) * 60)
 
-    return cadence_spm, cadence_std
+    return cadence_spm, cadence_std, len(intervals_frames)
 
 
 def calculate_ground_contact_time(
@@ -222,6 +265,21 @@ def calculate_duty_factor(gct_ms: float, flight_time_ms: float) -> float:
     return gct_ms / stride_time
 
 
+#: A stride/step endpoint within this many frames of a missing hip is not
+#: measured. The hip track is clip-mean-filled and then smoothed (sigma=2), so
+#: a detected endpoint next to a gap is pulled toward the clip mean; checking
+#: the endpoint frame alone let an exit-zone pair collapse to 0.026 m. Two
+#: frames was the narrowest guard that removed every such pair in the S1
+#: cohort while changing no other clip.
+HIP_GAP_GUARD_FRAMES = 2
+
+
+def _hip_gap_near(hip_x_missing: np.ndarray, frame: int) -> bool:
+    """True if the hip is missing at ``frame`` or within the guard around it."""
+    lo = max(0, frame - HIP_GAP_GUARD_FRAMES)
+    return bool(hip_x_missing[lo : frame + HIP_GAP_GUARD_FRAMES + 1].any())
+
+
 def calculate_stride_length(
     landmarks: np.ndarray,
     contacts: List[GroundContact],
@@ -261,9 +319,10 @@ def calculate_stride_length(
 
     # Collect same-leg (i, i+2) pairs with their frame intervals.
     # Cross-leg pairs are skipped: a stride is one complete same-leg cycle.
-    # Pairs with a fabricated endpoint (real detection missing at s or e) are
-    # skipped too -- keeping them would measure displacement to a
-    # constant clip-mean position rather than the runner's actual hip.
+    # Pairs with a fabricated or contaminated endpoint (hip missing at s or e,
+    # or within HIP_GAP_GUARD_FRAMES of it) are skipped too -- keeping them
+    # would measure displacement toward a constant clip-mean position rather
+    # than the runner's actual hip.
     candidate_intervals: List[int] = []
     candidate_pairs: List[tuple] = []
     for i in range(len(contacts) - 2):
@@ -272,7 +331,7 @@ def calculate_stride_length(
         s = contacts[i].frame
         e = contacts[i + 2].frame
         if s < len(hip_x_smooth) and e < len(hip_x_smooth):
-            if hip_x_missing[s] or hip_x_missing[e]:
+            if _hip_gap_near(hip_x_missing, s) or _hip_gap_near(hip_x_missing, e):
                 continue
             candidate_intervals.append(e - s)
             candidate_pairs.append((s, e))
@@ -320,8 +379,8 @@ def calculate_step_length(
     left_hip_x = landmarks[:, LandmarkIndex.LEFT_HIP, 0]
     right_hip_x = landmarks[:, LandmarkIndex.RIGHT_HIP, 0]
     hip_x = np.nanmean([left_hip_x, right_hip_x], axis=0)
-    # See calculate_stride_length for why fabricated (nan_to_num-filled)
-    # endpoints must be excluded rather than measured.
+    # See calculate_stride_length for why fabricated (nan_to_num-filled) or
+    # gap-adjacent endpoints must be excluded rather than measured.
     hip_x_missing = np.isnan(hip_x)
     hip_x_smooth = gaussian_filter1d(
         np.nan_to_num(hip_x, nan=float(np.nanmean(hip_x))), sigma=2
@@ -334,7 +393,9 @@ def calculate_step_length(
         end_frame = contacts[i + 1].frame
 
         if start_frame < len(hip_x_smooth) and end_frame < len(hip_x_smooth):
-            if hip_x_missing[start_frame] or hip_x_missing[end_frame]:
+            if _hip_gap_near(hip_x_missing, start_frame) or _hip_gap_near(
+                hip_x_missing, end_frame
+            ):
                 continue
             displacement = abs(hip_x_smooth[end_frame] - hip_x_smooth[start_frame])
             step_lengths_px.append(displacement)
@@ -745,7 +806,7 @@ def extract_all_metrics(
         raise ValueError(f"Insufficient ground contacts detected: {len(contacts)}")
 
     # Temporal metrics (GCT already computed during detection)
-    cadence_spm, cadence_std = calculate_cadence(contacts, fps)
+    cadence_spm, cadence_std = calculate_cadence(contacts, fps, landmarks)
     gct_ms, gct_std, _ = calculate_ground_contact_time(contacts, refined_only=True)
     flight_time_ms = calculate_flight_time(cadence_spm, gct_ms)
     duty_factor = calculate_duty_factor(gct_ms, flight_time_ms)
