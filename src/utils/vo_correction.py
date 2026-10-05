@@ -32,11 +32,16 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-# Values copied from data/main_collection/analysis/vo_bias_fit_coefficients.json
-# (gitignored data, not a runtime dependency), re-fitted 2026-08-26
-# against pole-parallax depth-corrected Tier A labels. The full
-# provenance, including the two superseded fits that must not be reinstated,
-# is in src/training/dataset.py's own note beside the re-export.
+# Fitted 2026-08-26 against pole-parallax depth-corrected Tier A labels, on
+# the three-pass BlazePose extraction; the record is
+# data/main_collection/analysis/vo_bias_fit_coefficients_v1.20.json
+# (gitignored data, not a runtime dependency), which reproduces these two
+# numbers exactly. The pipeline has since moved to a two-pass extraction.
+# Refitting on it moves corrected values by about 2.7% while these constants
+# measure unbiased on it (-0.26%), so they were kept deliberately, not left
+# behind. The full provenance, including the superseded fits that must not
+# be reinstated, is in src/training/dataset.py's own note beside the
+# re-export.
 VO_CORRECTION_A = 4.754363882633737
 VO_CORRECTION_B = 1.0357032759204108
 
