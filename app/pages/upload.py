@@ -960,6 +960,13 @@ if analyze_clicked and num_uploaded > 0:
                 # below which are opt-in via the Deterministic Kinematics
                 # Engine. None if encoding failed.
                 "annotated_video_fast": annotated_video_fast,
+                # The fast path's BlazePose extraction, reused by the
+                # in-depth analysis instead of running BlazePose again
+                # Session-only: not exported, so None after a
+                # re-import, and the in-depth run then extracts itself.
+                "extraction_fast": (
+                    fast_result.get("extraction") if fast_result else None
+                ),
                 # Populated later, per-clip, by results.py's "Run Full
                 # Analysis" (the classical pipeline is opt-in, not
                 # automatic). None until then.

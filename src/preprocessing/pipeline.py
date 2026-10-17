@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -640,6 +640,8 @@ def run_clip_pipeline(
     demote_weak_strike_vote: bool = False,
     unknown_as_forefoot: bool = False,
     progress: Optional[ProgressCallback] = None,
+    extraction: Optional[BlazePoseExtraction] = None,
+    rtm_window: Optional[Tuple[int, int]] = None,
 ) -> ClipAnalysis:
     """Run the v1.20 preprocessing + metrics pipeline on one clip.
 
@@ -677,6 +679,12 @@ def run_clip_pipeline(
             (validation re-run: stride/velocity certify, cadence raw reading
             softens to caveats, second cohort 14/15→13/15).
         progress: Optional callback(stage_label, fraction_0_to_1) for UI.
+        extraction: The clip's BlazePose extraction, when the caller already
+            ran ``extract_blazepose_landmarks_and_calibration`` on this
+            ``video_path`` with these arguments (the app does, to window
+            RTMPose on its presence window). Skips re-extracting.
+        rtm_window: Inclusive pose frames RTMPose was run on, when windowed;
+            see ``detect_contacts_coarse``. None means the whole clip.
 
     Returns:
         ClipAnalysis with metrics, calibration, contacts, quality, fps.
@@ -695,22 +703,23 @@ def run_clip_pipeline(
     else:
         toe_off_method = "ankle_y_lift"
 
-    extraction = extract_blazepose_landmarks_and_calibration(
-        video_path,
-        runner_height_cm,
-        shoe_sole_cm=shoe_sole_cm,
-        shoe_type=shoe_type,
-        bidirectional=bidirectional,
-        seeded_pass=seeded_pass,
-        motion_filter=motion_filter,
-        gap_fill=gap_fill,
-        interp_method=interp_method,
-        gap_max_frames=gap_max_frames,
-        gap_min_anchor_vis=gap_min_anchor_vis,
-        motion_filter_min_ms=motion_filter_min_ms,
-        prune_spurious_contacts=prune_spurious_contacts,
-        progress=progress,
-    )
+    if extraction is None:
+        extraction = extract_blazepose_landmarks_and_calibration(
+            video_path,
+            runner_height_cm,
+            shoe_sole_cm=shoe_sole_cm,
+            shoe_type=shoe_type,
+            bidirectional=bidirectional,
+            seeded_pass=seeded_pass,
+            motion_filter=motion_filter,
+            gap_fill=gap_fill,
+            interp_method=interp_method,
+            gap_max_frames=gap_max_frames,
+            gap_min_anchor_vis=gap_min_anchor_vis,
+            motion_filter_min_ms=motion_filter_min_ms,
+            prune_spurious_contacts=prune_spurious_contacts,
+            progress=progress,
+        )
     cfr_path = extraction.cfr_path
     fps = extraction.fps
     res_h = extraction.res_h
@@ -770,6 +779,7 @@ def run_clip_pipeline(
         strike_from_refined_ic=strike_from_refined_ic,
         demote_weak_strike_vote=demote_weak_strike_vote,
         unknown_as_forefoot=unknown_as_forefoot,
+        rtm_window=rtm_window,
     )
     # Resolve the vote once: hand the decided pattern to extract_all_metrics
     # rather than letting it re-vote on its own coarse pass. It then hands

@@ -744,6 +744,7 @@ def extract_all_metrics(
     rtm_scores: Optional[np.ndarray] = None,
     unknown_as_forefoot: bool = False,
     contacts: Optional[List[GroundContact]] = None,
+    rtm_window: Optional[Tuple[int, int]] = None,
 ) -> BiomechanicalMetrics:
     """
     Extract complete biomechanical metrics from pose sequence.
@@ -778,6 +779,9 @@ def extract_all_metrics(
             ``pipeline.run_clip_pipeline``) must pass it; leaving it None
             re-detects, which is what let a per-contact parameter reach a
             written ``contacts.csv`` and never reach ``result_full.json``.
+        rtm_window: Inclusive frames RTMPose was run on, when windowed;
+            forwarded to ``detect_ground_contacts``. Ignored when
+            ``contacts`` is given.
 
     Returns:
         BiomechanicalMetrics object with all metrics
@@ -821,6 +825,7 @@ def extract_all_metrics(
             resolution_width=resolution_width,
             rtm_landmarks=rtm_landmarks,
             rtm_scores=rtm_scores,
+            rtm_window=rtm_window,
         )
 
     if len(contacts) < 3:

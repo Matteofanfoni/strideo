@@ -121,7 +121,9 @@ def run_fast_path(
          dict (cfr_path/fps/skip_rate/frame_width/selected_landmarks/
          selected_visibilities - everything results.py's annotated-video
          button needs to redraw the skeleton + metrics HUD later,
-         without re-running extraction)}
+         without re-running extraction), "extraction": the
+         ``BlazePoseExtraction`` itself, which ``run_full_analysis`` reuses
+         rather than running BlazePose a second time}
     """
     from src.inference.onnx_infer import OnnxStrideoInference
     from src.preprocessing.pipeline import extract_blazepose_landmarks_and_calibration
@@ -230,6 +232,7 @@ def run_fast_path(
         "metrics": asdict(metrics),
         "preprocessing": preprocessing,
         "overlay": overlay,
+        "extraction": extraction,
     }
 
 
@@ -239,20 +242,30 @@ def run_full_analysis(
     shoe_type: Optional[str],
     shoe_sole_cm: float,
     progress: Optional[ProgressCallback] = None,
+    extraction=None,
 ) -> ClipAnalysis:
     """The classical v1.20 pipeline (RTMPose + contact detection), moved out
     of ``upload.py`` verbatim so both pages can trigger it without
     duplicating this block.
+
+    ``extraction`` is the fast path's ``BlazePoseExtraction`` for this clip
+    (``run_fast_path``'s "extraction"): same capped CFR, same arguments, so
+    it is reused instead of running BlazePose again. None, as after a
+    re-import from a saved results file, extracts here.
 
     Took ``pace_level``/``footwear_category`` once, purely to
     forward them to ``run_clip_pipeline``'s strike-pattern priors; a later pass
     deleted those priors, so both arguments were inert and are gone.
     ``run_fast_path`` above still takes a live ``pace_level`` -- that is the
     NN's FiLM conditioning input and is unrelated."""
-    from src.preprocessing.pipeline import run_clip_pipeline
+    from src.preprocessing.pipeline import (
+        extract_blazepose_landmarks_and_calibration,
+        run_clip_pipeline,
+    )
     from src.preprocessing.rtmpose_extractor import (
         detect_device,
-        extract_rtmpose_landmarks,
+        extract_rtmpose_landmarks_windowed,
+        rtmpose_window,
     )
 
     cfr_path, _ = ensure_cfr(video_path)
@@ -271,20 +284,48 @@ def run_full_analysis(
     # front-loaded once GPU tier flipped which phase is slower.
     device = detect_device()
     rtm_end = 0.40 if device == "cuda" else 0.92
+    # BlazePose comes first, so RTMPose can be windowed on its
+    # presence window. The phases keep their measured widths: RTMPose
+    # (rtm_end - 0.02), and the rest, ~90% of which is BlazePose (its two
+    # passes are ~90% of extraction), ahead of RTMPose instead of after it.
+    # Reusing the fast path's extraction drops BlazePose's band entirely.
+    blaze_end = 0.02 if extraction is not None else 0.02 + 0.9 * (1.0 - rtm_end)
+    rtm_stop = blaze_end + (rtm_end - 0.02)
 
-    def _rtm_progress(done, total, _p=progress, _end=rtm_end):
+    def _blaze_progress(stage, frac, _p=progress):
+        if _p is not None:
+            _p(stage, 0.02 + min(frac, 1.0) * (blaze_end - 0.02))
+
+    if extraction is None:
+        extraction = extract_blazepose_landmarks_and_calibration(
+            proc_path,
+            runner_height_cm,
+            shoe_sole_cm=shoe_sole_cm,
+            shoe_type=shoe_type,
+            progress=_blaze_progress,
+        )
+    window = rtmpose_window(extraction.selected_landmarks)
+
+    def _rtm_progress(done, total, _p=progress):
         if _p is not None:
             frac = (done / total) if total else 0.0
             _p(
                 f"RTMPose pose estimation… frame {done}/{total}",
-                0.02 + frac * (_end - 0.02),
+                blaze_end + frac * (rtm_stop - blaze_end),
             )
 
-    rtm = extract_rtmpose_landmarks(proc_path, device=device, progress=_rtm_progress)
+    rtm = extract_rtmpose_landmarks_windowed(
+        proc_path,
+        len(extraction.selected_landmarks),
+        window,
+        extraction.skip_rate,
+        device=device,
+        progress=_rtm_progress,
+    )
 
-    def _pipe_progress(stage, frac, _p=progress, _start=rtm_end):
+    def _pipe_progress(stage, frac, _p=progress):
         if _p is not None:
-            _p(stage, _start + frac * (1.0 - _start))
+            _p(stage, rtm_stop + frac * (1.0 - rtm_stop))
 
     return run_clip_pipeline(
         proc_path,
@@ -294,4 +335,6 @@ def run_full_analysis(
         rtm_landmarks=rtm.keypoints,
         rtm_scores=rtm.scores,
         progress=_pipe_progress,
+        extraction=extraction,
+        rtm_window=window,
     )

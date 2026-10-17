@@ -17,8 +17,9 @@ RTMPose runs through rtmlib's ONNX backend; on the CPU host this is plain
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -30,6 +31,51 @@ logger = logging.getLogger(__name__)
 _BODY_KP_INDICES: List[int] = list(range(17))
 
 ProgressCallback = Callable[[int, int], None]
+
+#: Frames added each side of BlazePose's presence window before RTMPose is
+#: run on it. Replaying all 50 GT clips with RTMPose masked outside the
+#: window, 20 frames was the smallest padding that left every contact and
+#: metric unchanged against the full-clip run; 30 keeps a 10-frame margin.
+RTM_WINDOW_PAD_FRAMES = 30
+
+
+def rtmpose_window(
+    landmarks: np.ndarray, pad: int = RTM_WINDOW_PAD_FRAMES
+) -> Optional[Tuple[int, int]]:
+    """Inclusive pose-frame range RTMPose needs to run on, or None for all.
+
+    BlazePose's presence window (``contact_filter.presence_window``, the
+    window ``deployable_filter`` gates contacts on) widened by ``pad`` frames
+    each side and clamped to the clip. ``landmarks`` is BlazePose's final
+    ``selected_landmarks``, which exist before RTMPose runs. None when no
+    frame has both a hip and an ankle, so the caller runs the whole clip.
+    """
+    from src.utils.contact_filter import presence_window
+
+    pres = presence_window(landmarks)
+    if pres is None:
+        return None
+    last = len(landmarks) - 1
+    return (
+        max(0, int(math.floor(pres[0])) - pad),
+        min(last, int(math.ceil(pres[1])) + pad),
+    )
+
+
+def mask_to_window(
+    keypoints: np.ndarray, scores: np.ndarray, window: Optional[Tuple[int, int]]
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Copies of full-clip RTMPose arrays with every frame outside ``window``
+    zeroed, i.e. what a windowed extraction returns: RTMPose is stateless per
+    frame and writes zeros for a frame it does not detect on. Lets a cached
+    full-clip extraction stand in for a windowed live one."""
+    kp, sc = keypoints.copy(), scores.copy()
+    if window is not None:
+        outside = np.ones(len(kp), dtype=bool)
+        outside[window[0] : window[1] + 1] = False
+        kp[outside] = 0
+        sc[outside] = 0
+    return kp, sc
 
 
 def detect_device() -> str:
@@ -175,3 +221,43 @@ def extract_rtmpose_landmarks(
         scores = scores[:t]
 
     return RTMPoseResult(keypoints=keypoints, scores=scores, fps=effective_fps)
+
+
+def extract_rtmpose_landmarks_windowed(
+    video_path: str,
+    n_frames: int,
+    window: Optional[Tuple[int, int]],
+    skip_rate: int,
+    *,
+    device: str = "cpu",
+    mode: str = "performance",
+    progress: Optional[ProgressCallback] = None,
+) -> RTMPoseResult:
+    """RTMPose on pose frames ``window`` only, returned at full clip length.
+
+    ``window`` is in pose frames (BlazePose's index, see ``rtmpose_window``);
+    pose frame ``t`` is source frame ``t * skip_rate``, so the source range
+    starts on the same ``skip_rate`` grid BlazePose sampled. Frames outside
+    the window are zeros, as for a frame with no detection, so the result is
+    ``n_frames`` long and ``T_rtm == T_blaze`` still holds. A None window
+    runs the whole clip.
+    """
+    if window is None:
+        return extract_rtmpose_landmarks(
+            video_path, device=device, mode=mode, progress=progress
+        )
+    lo, hi = window
+    part = extract_rtmpose_landmarks(
+        video_path,
+        start_frame=lo * skip_rate,
+        end_frame=hi * skip_rate,
+        device=device,
+        mode=mode,
+        progress=progress,
+    )
+    keypoints = np.zeros((n_frames, 133, 2), dtype=np.float32)
+    scores = np.zeros((n_frames, 133), dtype=np.float32)
+    n = min(len(part.keypoints), n_frames - lo)
+    keypoints[lo : lo + n] = part.keypoints[:n]
+    scores[lo : lo + n] = part.scores[:n]
+    return RTMPoseResult(keypoints=keypoints, scores=scores, fps=part.fps)

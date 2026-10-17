@@ -102,6 +102,7 @@ def detect_contacts_coarse(
     ankle_horiz_vel_gate_frac: float = 0.0,
     rtm_landmarks: Optional[np.ndarray] = None,
     rtm_scores: Optional[np.ndarray] = None,
+    rtm_window: Optional[Tuple[int, int]] = None,
 ) -> Tuple[List[GroundContact], Dict]:
     """
     COARSE PASS: Detect ground contacts using leg compression velocity.
@@ -128,6 +129,11 @@ def detect_contacts_coarse(
             BlazePose. Scores in [1, 8]; zero means no detection (v1.20).
         rtm_scores: (T, 133) RTMPose detection scores. Required when
             rtm_landmarks is provided.
+        rtm_window: Inclusive ``(start, end)`` frames RTMPose was run on,
+            when it was run on a window rather than the whole clip.
+            The hip-detection share that picks the smoothing sigma is then
+            taken over that window, so frames RTMPose never saw do not count
+            as missed detections. None means the whole clip.
 
     Returns:
         contacts: List of GroundContact with coarse timing
@@ -172,8 +178,13 @@ def detect_contacts_coarse(
             # Binary valid-frame mask (score > 0) used for confidence and sigma.
             hip_vis = (rtm_scores[:, rtm_hip_idx] > 0).astype(float)
             ankle_vis = (rtm_scores[:, rtm_ankle_idx] > 0).astype(float)
-            mean_hip_vis = float(np.nanmean(hip_vis))
-            mean_ankle_vis = float(np.nanmean(ankle_vis))
+            ran = (
+                slice(None)
+                if rtm_window is None
+                else slice(rtm_window[0], rtm_window[1] + 1)
+            )
+            mean_hip_vis = float(np.nanmean(hip_vis[ran]))
+            mean_ankle_vis = float(np.nanmean(ankle_vis[ran]))
 
             sigma = 2.0 if mean_hip_vis > 0.5 else 3.0
             compression = gaussian_filter1d(a_y - h_y, sigma=sigma)
@@ -2085,6 +2096,7 @@ def detect_ground_contacts(
     demote_weak_strike_vote: bool = False,
     unknown_as_forefoot: bool = False,
     min_participation: float = 0.0,
+    rtm_window: Optional[Tuple[int, int]] = None,
 ) -> Tuple[List[GroundContact], Dict]:
     """
     Two-pass bilateral ground contact detection.
@@ -2136,6 +2148,8 @@ def detect_ground_contacts(
             ``resolution_width``.
         resolution_width: Video width in pixels. Required when
             ``gate_landmark_bounds=True``.
+        rtm_window: Inclusive frames RTMPose was run on, when windowed;
+            see ``detect_contacts_coarse``. None means the whole clip.
 
     Returns:
         contacts: List of GroundContact with timing and GCT
@@ -2150,6 +2164,7 @@ def detect_ground_contacts(
         ankle_horiz_vel_gate_frac=ankle_horiz_vel_gate_frac,
         rtm_landmarks=rtm_landmarks,
         rtm_scores=rtm_scores,
+        rtm_window=rtm_window,
     )
 
     if len(contacts) < 2:

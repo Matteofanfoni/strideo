@@ -2000,6 +2000,7 @@ if results_with_metrics:
                             shoe_type=r.get("shoe_type"),
                             shoe_sole_cm=r.get("shoe_sole_cm", 2.5),
                             progress=_full_progress,
+                            extraction=r.get("extraction_fast"),
                         )
                         if full_analysis.reliability.excluded:
                             # The runner's presence window is
@@ -2785,6 +2786,9 @@ def _generate_pdf(results_data):
 _EXPORT_EXCLUDE_KEYS = {
     "analysis_full",
     "annotated_video_fast",
+    # The fast path's BlazePoseExtraction (numpy arrays, a dataclass),
+    # kept only so the in-depth run can skip a second BlazePose pass.
+    "extraction_fast",
     "analysis",
     "metrics",
     "preprocessing",
