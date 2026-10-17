@@ -131,6 +131,10 @@ def run_fast_path(
     if not Path(onnx_model_path).exists():
         raise OnnxModelMissingError(Path(onnx_model_path))
 
+    # Converting and capping a 4K clip re-encodes it (~18 s on the CPU
+    # Space), so name the stage rather than leave the bar silent at 0%.
+    if progress is not None:
+        progress("Preparing video…", 0.0)
     cfr_path, _ = ensure_cfr(video_path)
     proc_path, _ = cap_frames(cfr_path, MAX_PIPELINE_FRAMES)
 
@@ -250,8 +254,10 @@ def run_full_analysis(
 
     ``extraction`` is the fast path's ``BlazePoseExtraction`` for this clip
     (``run_fast_path``'s "extraction"): same capped CFR, same arguments, so
-    it is reused instead of running BlazePose again. None, as after a
-    re-import from a saved results file, extracts here.
+    it is reused instead of running BlazePose again, and its ``cfr_path``
+    (the prepared, capped clip) is used instead of preparing the upload a
+    second time. None, as after a re-import from a saved results file,
+    prepares and extracts here.
 
     Took ``pace_level``/``footwear_category`` once, purely to
     forward them to ``run_clip_pipeline``'s strike-pattern priors; a later pass
@@ -263,13 +269,22 @@ def run_full_analysis(
         run_clip_pipeline,
     )
     from src.preprocessing.rtmpose_extractor import (
-        detect_device,
         extract_rtmpose_landmarks_windowed,
+        load_rtmpose,
         rtmpose_window,
     )
 
-    cfr_path, _ = ensure_cfr(video_path)
-    proc_path, _ = cap_frames(cfr_path, MAX_PIPELINE_FRAMES)
+    if extraction is not None:
+        proc_path = extraction.cfr_path
+    else:
+        if progress is not None:
+            progress("Preparing video…", 0.0)
+        cfr_path, _ = ensure_cfr(video_path)
+        proc_path, _ = cap_frames(cfr_path, MAX_PIPELINE_FRAMES)
+
+    if progress is not None:
+        progress("Loading RTMPose model…", 0.01)
+    rtm_model, device = load_rtmpose()
 
     # RTMPose's share of the bar depends on which device it actually runs
     # on - a single fixed split can't be right for both, since GPU doesn't
@@ -281,8 +296,8 @@ def run_full_analysis(
     # barely benefits from GPU at all, so it goes from a rounding error at
     # CPU tier to the majority of the wall-clock at GPU tier. The previous
     # single CPU-calibrated split (0.92/0.08) made the bar look badly
-    # front-loaded once GPU tier flipped which phase is slower.
-    device = detect_device()
+    # front-loaded once GPU tier flipped which phase is slower. ``device`` is
+    # the one the built session runs on, not what onnxruntime-gpu lists.
     rtm_end = 0.40 if device == "cuda" else 0.92
     # BlazePose comes first, so RTMPose can be windowed on its
     # presence window. The phases keep their measured widths: RTMPose
@@ -321,6 +336,7 @@ def run_full_analysis(
         extraction.skip_rate,
         device=device,
         progress=_rtm_progress,
+        model=rtm_model,
     )
 
     def _pipe_progress(stage, frac, _p=progress):

@@ -10,8 +10,9 @@ the same ``(keypoints, scores)`` arrays the cached path produces, frame-aligned
 to BlazePose via the shared ``skip_rate`` so the downstream
 ``T_rtm == T_blaze`` invariant holds.
 
-RTMPose runs through rtmlib's ONNX backend; on the CPU host this is plain
-``onnxruntime`` (no CUDA payload).
+RTMPose runs through rtmlib's ONNX backend. The app image installs
+``onnxruntime-gpu`` on every tier, so ``load_rtmpose`` decides the device
+from the session it builds rather than from what is installed.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -78,25 +79,52 @@ def mask_to_window(
     return kp, sc
 
 
-def detect_device() -> str:
-    """ "cuda" if onnxruntime has a working CUDA execution provider, else "cpu".
+def load_rtmpose(mode: str = "performance") -> Tuple[Any, str]:
+    """Build rtmlib's Wholebody on CUDA when it actually initialises, else on
+    CPU, and return it with the device it really runs on.
 
-    Lets the live app pick GPU when deployed on GPU-tier hardware and fall
-    back to CPU on CPU-tier hardware, from the SAME image/requirements
-    (``onnxruntime-gpu`` registers both providers and simply omits CUDA when
-    its runtime libs aren't present — this is what makes the fallback
-    automatic rather than something that needs re-wiring per deploy target).
-    Scripts that already pass an explicit ``device=`` (dataset prep, analysis
-    scripts, tests) are unaffected; this is only for callers that want the
-    live-hardware answer.
+    Lets the live app pick GPU on GPU-tier hardware and CPU on CPU-tier
+    hardware from the same image. The device is read from the providers of
+    the ONNX Runtime session rtmlib built, not from
+    ``ort.get_available_providers()``: that lists what the installed
+    ``onnxruntime-gpu`` was compiled with, so it names CUDA on a machine
+    with no GPU, and the session then falls back to CPU on its own. Trusting
+    the list put the CPU Space on the GPU progress split.
+
+    Returns:
+        (model, device): the ``Wholebody`` to pass to
+        ``extract_rtmpose_landmarks(model=...)``, and "cuda" or "cpu".
     """
     import onnxruntime as ort
+    from rtmlib import Wholebody
 
-    device = (
-        "cuda" if "CUDAExecutionProvider" in ort.get_available_providers() else "cpu"
-    )
-    logger.info("RTMPose device auto-detected: %s", device)
-    return device
+    def _build(device: str) -> Any:
+        return Wholebody(
+            mode=mode, to_openpose=False, backend="onnxruntime", device=device
+        )
+
+    model = None
+    if "CUDAExecutionProvider" in ort.get_available_providers():
+        try:
+            model = _build("cuda")
+        except Exception as exc:  # a failed CUDA session should not end the run
+            logger.warning("RTMPose CUDA session failed (%s); using CPU", exc)
+    if model is None:
+        model = _build("cpu")
+    providers = model.pose_model.session.get_providers()
+    device = "cuda" if "CUDAExecutionProvider" in providers else "cpu"
+    logger.info("RTMPose device: %s (session providers %s)", device, providers)
+    return model, device
+
+
+def detect_device() -> str:
+    """The device RTMPose really runs on here, "cuda" or "cpu".
+
+    Builds the model to find out (see ``load_rtmpose``), so a caller that
+    then extracts should call ``load_rtmpose`` and pass its model instead of
+    loading it twice.
+    """
+    return load_rtmpose()[1]
 
 
 @dataclass
@@ -134,6 +162,7 @@ def extract_rtmpose_landmarks(
     device: str = "cpu",
     mode: str = "performance",
     progress: Optional[ProgressCallback] = None,
+    model: Any = None,
 ) -> RTMPoseResult:
     """Run RTMPose-x over a clip and return frame-aligned landmarks.
 
@@ -152,6 +181,8 @@ def extract_rtmpose_landmarks(
         mode: rtmlib model tier — "performance" (RTMPose-x, the v1.20 model),
             "balanced", or "lightweight".
         progress: Optional callback(done, total) invoked per processed frame.
+        model: A ``Wholebody`` from ``load_rtmpose``, used instead of building
+            one; ``device`` and ``mode`` are then ignored.
 
     Returns:
         RTMPoseResult with (T, 133, 2) keypoints, (T, 133) scores, effective fps.
@@ -181,12 +212,14 @@ def extract_rtmpose_landmarks(
     window_frames = max(0, resolved_end - start_frame + 1)
     expected = (window_frames + skip_rate - 1) // skip_rate
 
-    wholebody = Wholebody(
-        mode=mode,
-        to_openpose=False,
-        backend="onnxruntime",
-        device=device,
-    )
+    wholebody = model
+    if wholebody is None:
+        wholebody = Wholebody(
+            mode=mode,
+            to_openpose=False,
+            backend="onnxruntime",
+            device=device,
+        )
 
     keypoints = np.zeros((expected, 133, 2), dtype=np.float32)
     scores = np.zeros((expected, 133), dtype=np.float32)
@@ -232,6 +265,7 @@ def extract_rtmpose_landmarks_windowed(
     device: str = "cpu",
     mode: str = "performance",
     progress: Optional[ProgressCallback] = None,
+    model: Any = None,
 ) -> RTMPoseResult:
     """RTMPose on pose frames ``window`` only, returned at full clip length.
 
@@ -244,7 +278,7 @@ def extract_rtmpose_landmarks_windowed(
     """
     if window is None:
         return extract_rtmpose_landmarks(
-            video_path, device=device, mode=mode, progress=progress
+            video_path, device=device, mode=mode, progress=progress, model=model
         )
     lo, hi = window
     part = extract_rtmpose_landmarks(
@@ -254,6 +288,7 @@ def extract_rtmpose_landmarks_windowed(
         device=device,
         mode=mode,
         progress=progress,
+        model=model,
     )
     keypoints = np.zeros((n_frames, 133, 2), dtype=np.float32)
     scores = np.zeros((n_frames, 133), dtype=np.float32)

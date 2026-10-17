@@ -1,7 +1,8 @@
 # Strideo app dependencies. BlazePose (fast path) is CPU-only by design (see
 # Dockerfile: MEDIAPIPE_DISABLE_GPU=1). RTMPose-x (full analysis) auto-detects
-# CUDA at runtime via src.preprocessing.rtmpose_extractor.detect_device() and
-# falls back to CPU automatically — same image/requirements work unmodified
+# CUDA at runtime via src.preprocessing.rtmpose_extractor.load_rtmpose(), which
+# reads the device off the session it built (this package lists CUDA even on
+# a CPU-only host), and falls back to CPU — same image/requirements work unmodified
 # on a CPU-tier or GPU-tier HF Space; no PyTorch required either way.
 #
 # Model weights are NOT pip-installable:
