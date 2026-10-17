@@ -10,10 +10,51 @@ Reference: the data-collection protocol, frame-rate section.
 
 import json
 import subprocess
+import tempfile
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
+
+#: Called with the fraction (0-1) of an ffmpeg encode done so far.
+EncodeProgress = Callable[[float], None]
+
+
+def _run_ffmpeg(
+    cmd: List[str],
+    total_frames: int,
+    progress: Optional[EncodeProgress],
+    what: str,
+) -> None:
+    """Run an ffmpeg command whose last argument is the output path.
+
+    With ``progress``, ffmpeg is asked for machine-readable progress
+    (``-progress pipe:1``, which reports and does not change the encode) and
+    ``progress`` gets ``frames written / total_frames`` as it goes. stderr
+    goes to a temp file so a chatty encode cannot fill a pipe and stall.
+
+    Raises:
+        RuntimeError: If ffmpeg exits non-zero.
+    """
+    if progress is None:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"FFmpeg {what} failed: {result.stderr.strip()}")
+        return
+
+    cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats", cmd[-1]]
+    with tempfile.TemporaryFile(mode="w+") as err:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True)
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            key, _, value = line.strip().partition("=")
+            if key == "frame" and value.isdigit() and total_frames > 0:
+                progress(min(int(value) / total_frames, 1.0))
+        returncode = proc.wait()
+        if returncode != 0:
+            err.seek(0)
+            raise RuntimeError(f"FFmpeg {what} failed: {err.read().strip()}")
+    progress(1.0)
 
 
 def _probe_rates(video_path: str) -> Tuple[float, float]:
@@ -125,6 +166,7 @@ def convert_to_cfr(
     output_path: str | None = None,
     target_fps: int = 60,
     crf: int = 18,
+    progress: Optional[EncodeProgress] = None,
 ) -> str:
     """
     Convert a video from VFR to CFR using FFmpeg.
@@ -138,6 +180,7 @@ def convert_to_cfr(
             '_cfr' suffix to the input filename.
         target_fps: Target constant frame rate (default 60).
         crf: Constant Rate Factor for quality (default 18, near-lossless).
+        progress: Optional callback(fraction) as the encode proceeds.
 
     Returns:
         Path to the converted CFR video file.
@@ -171,9 +214,8 @@ def convert_to_cfr(
         str(out),
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg conversion failed: {result.stderr.strip()}")
+    total = converted_frame_count(str(path), target_fps) if progress else 0
+    _run_ffmpeg(cmd, total, progress, "conversion")
 
     # Verify output is truly CFR (the protocol's own verification step)
     _verify_cfr(str(out), target_fps)
@@ -181,11 +223,40 @@ def convert_to_cfr(
     return str(out)
 
 
+def frame_count(video_path: str) -> int:
+    """Frames in a video as its container reports them (no decode)."""
+    cap = cv2.VideoCapture(str(video_path))
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    return n
+
+
+def converted_frame_count(video_path: str, target_fps: int = 60) -> int:
+    """About how many frames ``convert_to_cfr`` writes: the clip's duration
+    at ``target_fps``. Used to size progress, never to cut the video."""
+    cap = cv2.VideoCapture(str(video_path))
+    n = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    return int(round(n * target_fps / fps)) if fps > 0 else int(n)
+
+
+def needs_cfr_conversion(
+    video_path: str, target_fps: int = 60, tolerance: float = 0.01
+) -> bool:
+    """Whether ``ensure_cfr`` would re-encode this video: it is variable-rate,
+    or constant at a rate other than ``target_fps``."""
+    r_fps, avg_fps = _probe_rates(video_path)
+    constant = r_fps > 0 and abs(r_fps - avg_fps) / r_fps <= tolerance
+    return not (constant and _is_at_target(avg_fps, target_fps, tolerance))
+
+
 def ensure_cfr(
     video_path: str,
     target_fps: int = 60,
     crf: int = 18,
     tolerance: float = 0.01,
+    progress: Optional[EncodeProgress] = None,
 ) -> Tuple[str, bool]:
     """
     Ensure a video is CFR **at ``target_fps``**, converting only if necessary.
@@ -219,21 +290,20 @@ def ensure_cfr(
         crf: Constant Rate Factor for quality (default 18).
         tolerance: Relative tolerance for both the constancy check and the
             frame-rate match.
+        progress: Optional callback(fraction) during a conversion; not
+            called when no conversion is needed.
 
     Returns:
         Tuple of (path_to_cfr_video, was_converted).
         If the video was already CFR at ``target_fps``, returns the original
         path unchanged -- so a 60 fps source is a no-op, exactly as before.
     """
-    r_fps, avg_fps = _probe_rates(video_path)
-
-    constant = r_fps > 0 and abs(r_fps - avg_fps) / r_fps <= tolerance
-    at_target = _is_at_target(avg_fps, target_fps, tolerance)
-
-    if constant and at_target:
+    if not needs_cfr_conversion(video_path, target_fps, tolerance):
         return video_path, False
 
-    output_path = convert_to_cfr(video_path, target_fps=target_fps, crf=crf)
+    output_path = convert_to_cfr(
+        video_path, target_fps=target_fps, crf=crf, progress=progress
+    )
     return output_path, True
 
 
@@ -242,6 +312,7 @@ def cap_frames(
     max_frames: int,
     output_path: Optional[str] = None,
     crf: int = 18,
+    progress: Optional[EncodeProgress] = None,
 ) -> Tuple[str, bool]:
     """Trim a video to at most ``max_frames`` frames (keeping the first ones).
 
@@ -262,6 +333,8 @@ def cap_frames(
         max_frames: Maximum number of frames to keep.
         output_path: Output path; defaults to a ``_cap{N}`` suffix on the input.
         crf: x264 quality for the re-encode (default 18, near-lossless).
+        progress: Optional callback(fraction) during the re-encode; not
+            called when the clip is already short enough.
 
     Returns:
         Tuple of (path_to_use, was_capped). If the clip already has
@@ -275,9 +348,7 @@ def cap_frames(
     if not path.exists():
         raise FileNotFoundError(f"Video not found: {video_path}")
 
-    cap = cv2.VideoCapture(str(path))
-    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
+    n_frames = frame_count(str(path))
 
     if n_frames <= max_frames:
         return str(path), False
@@ -301,9 +372,7 @@ def cap_frames(
         "-y",
         str(output_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg frame-cap failed: {result.stderr.strip()}")
+    _run_ffmpeg(cmd, max_frames, progress, "frame-cap")
 
     return str(output_path), True
 

@@ -20,7 +20,13 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from src.preprocessing.frame_rate import cap_frames, ensure_cfr
+from src.preprocessing.frame_rate import (
+    cap_frames,
+    converted_frame_count,
+    ensure_cfr,
+    frame_count,
+    needs_cfr_conversion,
+)
 from src.preprocessing.nn_preprocessing import normalize_pace, preprocess_for_nn
 from src.preprocessing.pipeline import ClipAnalysis, ProgressCallback
 from src.utils.metrics import (
@@ -44,6 +50,53 @@ MAX_PIPELINE_FRAMES = 300
 # F6 (deploy) is the item that gets this artifact onto the deployed target;
 # this module only assumes it exists on disk once there.
 DEFAULT_ONNX_PATH = Path(__file__).parent.parent / "models" / "strideo_final.onnx"
+
+
+# Seconds to re-encode one 4K frame over seconds for BlazePose to process
+# one, on the live CPU Space: ~16 s to cap a clip to 300 frames against ~31 s
+# of BlazePose passes on those 300 (one fast-path run, 2026-10-17). Sizes
+# the "Preparing video" band against the pose band that follows it.
+ENCODE_TO_POSE_COST = 16.0 / 31.0
+
+
+def _prepare_video(
+    video_path: str, progress: Optional[ProgressCallback], pose_band: float
+) -> Tuple[str, float]:
+    """Convert to 60 fps CFR and cap to ``MAX_PIPELINE_FRAMES``, filling the
+    bar from 0 as each ffmpeg encode proceeds.
+
+    Either encode can be skipped (an already-CFR clip, a short one), so the
+    band is sized per clip before encoding starts: the frames each encode
+    will write, weighted by ``ENCODE_TO_POSE_COST``, against the frames
+    BlazePose will then process, inside the first ``pose_band`` of the bar.
+    A short CFR clip gets no band at all.
+
+    Returns:
+        (path of the prepared clip, fraction of the bar preparation used).
+    """
+    convert = needs_cfr_conversion(video_path)
+    n = converted_frame_count(video_path) if convert else frame_count(video_path)
+    convert_frames = n if convert else 0
+    cap_n = MAX_PIPELINE_FRAMES if n > MAX_PIPELINE_FRAMES else 0
+    encode = (convert_frames + cap_n) * ENCODE_TO_POSE_COST
+    pose = min(n, MAX_PIPELINE_FRAMES)
+    prep_end = pose_band * encode / (encode + pose) if encode > 0 else 0.0
+    convert_end = (
+        prep_end * convert_frames / (convert_frames + cap_n) if encode > 0 else 0.0
+    )
+
+    def _band(lo: float, hi: float):
+        if progress is None:
+            return None
+        return lambda f: progress("Preparing video…", lo + f * (hi - lo))
+
+    if progress is not None:
+        progress("Preparing video…", 0.0)
+    cfr_path, _ = ensure_cfr(video_path, progress=_band(0.0, convert_end))
+    proc_path, _ = cap_frames(
+        cfr_path, MAX_PIPELINE_FRAMES, progress=_band(convert_end, prep_end)
+    )
+    return proc_path, prep_end
 
 
 class OnnxModelMissingError(RuntimeError):
@@ -131,12 +184,14 @@ def run_fast_path(
     if not Path(onnx_model_path).exists():
         raise OnnxModelMissingError(Path(onnx_model_path))
 
-    # Converting and capping a 4K clip re-encodes it (~18 s on the CPU
-    # Space), so name the stage rather than leave the bar silent at 0%.
-    if progress is not None:
-        progress("Preparing video…", 0.0)
-    cfr_path, _ = ensure_cfr(video_path)
-    proc_path, _ = cap_frames(cfr_path, MAX_PIPELINE_FRAMES)
+    # Extraction reports 0-0.90 and the NN and annotation own the rest, so
+    # preparation takes the front of extraction's share and extraction is
+    # squeezed into what is left of it.
+    proc_path, prep_end = _prepare_video(video_path, progress, 0.90)
+
+    def _extract_progress(stage, frac, _p=progress):
+        if _p is not None:
+            _p(stage, prep_end + frac * (0.90 - prep_end) / 0.90)
 
     extraction = extract_blazepose_landmarks_and_calibration(
         proc_path,
@@ -147,7 +202,7 @@ def run_fast_path(
         seeded_pass=seeded_pass,
         prune_spurious_contacts=True,  # also the source of the velocity estimate
         pose_model_path=pose_model_path,
-        progress=progress,
+        progress=_extract_progress,
     )
 
     preprocessing, nn_input = _diagnostics_from_extraction(extraction)
@@ -277,10 +332,9 @@ def run_full_analysis(
     if extraction is not None:
         proc_path = extraction.cfr_path
     else:
-        if progress is not None:
-            progress("Preparing video…", 0.0)
-        cfr_path, _ = ensure_cfr(video_path)
-        proc_path, _ = cap_frames(cfr_path, MAX_PIPELINE_FRAMES)
+        # BlazePose's band starts at 0.02, so preparation fills the bar to
+        # there at most; RTMPose dwarfs it on this path.
+        proc_path, _ = _prepare_video(video_path, progress, 0.02)
 
     if progress is not None:
         progress("Loading RTMPose model…", 0.01)
@@ -303,9 +357,18 @@ def run_full_analysis(
     # presence window. The phases keep their measured widths: RTMPose
     # (rtm_end - 0.02), and the rest, ~90% of which is BlazePose (its two
     # passes are ~90% of extraction), ahead of RTMPose instead of after it.
-    # Reusing the fast path's extraction drops BlazePose's band entirely.
-    blaze_end = 0.02 if extraction is not None else 0.02 + 0.9 * (1.0 - rtm_end)
-    rtm_stop = blaze_end + (rtm_end - 0.02)
+    # Reusing the fast path's extraction drops BlazePose's band entirely, and
+    # what is left after RTMPose is only the engine, the other ~10% of the
+    # rest, so the bar is re-divided between those two: RTMPose then ends
+    # at ~0.99 on CPU and ~0.87 on GPU, not at rtm_end.
+    rtm_w = rtm_end - 0.02
+    if extraction is not None:
+        engine_w = 0.1 * (1.0 - rtm_end)
+        blaze_end = 0.02
+        rtm_stop = 0.02 + 0.98 * rtm_w / (rtm_w + engine_w)
+    else:
+        blaze_end = 0.02 + 0.9 * (1.0 - rtm_end)
+        rtm_stop = blaze_end + rtm_w
 
     def _blaze_progress(stage, frac, _p=progress):
         if _p is not None:
