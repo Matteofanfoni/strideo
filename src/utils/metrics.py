@@ -115,7 +115,9 @@ def _cadence_from_contacts(
 
 
 def calculate_ground_contact_time(
-    contacts: List[GroundContact], refined_only: bool = True
+    contacts: List[GroundContact],
+    refined_only: bool = True,
+    landmarks: Optional[np.ndarray] = None,
 ) -> Tuple[float, float, List[float]]:
     """
     Extract ground contact time from pre-computed contact data.
@@ -123,15 +125,34 @@ def calculate_ground_contact_time(
     GCT is computed during ground contact detection (Part 3) using the
     two-pass coarse/fine method. This function aggregates those values.
 
+    With ``landmarks`` (and ``refined_only``), only the contacts kept by
+    ``contact_filter.deployable_filter`` are averaged: refined, both ends inside
+    the runner's presence window, not a within-clip duration outlier, the same
+    set ``calculate_cadence`` takes its intervals from. Averaging every refined
+    contact instead let exit-zone and merged contacts in: clip MAE vs Kinovea
+    6.53 ms against 3.99 ms for the kept set on the 45-clip cohort. If no contact
+    survives, every refined contact is used, as before.
+
     Args:
         contacts: Ground contact events (with gct_ms pre-computed)
         refined_only: If True, only use contacts with 'refined' detection method
+        landmarks: The landmark array the presence window is computed from.
+            ``None`` uses every refined contact.
 
     Returns:
         mean_gct_ms: Mean GCT in milliseconds
         std_gct_ms: Standard deviation of GCT
         gct_values: List of individual GCT measurements
     """
+    if refined_only and landmarks is not None:
+        kept = [
+            c.gct_ms
+            for c in deployable_filter(contacts, presence_window(landmarks))["kept"]
+            if c.gct_ms is not None
+        ]
+        if kept:
+            return float(np.mean(kept)), float(np.std(kept)), kept
+
     # Filter contacts based on detection method and valid GCT
     if refined_only:
         valid_contacts = [
@@ -807,7 +828,9 @@ def extract_all_metrics(
 
     # Temporal metrics (GCT already computed during detection)
     cadence_spm, cadence_std = calculate_cadence(contacts, fps, landmarks)
-    gct_ms, gct_std, _ = calculate_ground_contact_time(contacts, refined_only=True)
+    gct_ms, gct_std, _ = calculate_ground_contact_time(
+        contacts, refined_only=True, landmarks=landmarks
+    )
     flight_time_ms = calculate_flight_time(cadence_spm, gct_ms)
     duty_factor = calculate_duty_factor(gct_ms, flight_time_ms)
 

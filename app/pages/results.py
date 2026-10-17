@@ -1344,13 +1344,30 @@ def _render_contact_tracker(analysis, clip_strike_pattern):
     toe_off_frame/gct_ms) the old interactive frame scrubber (since
     removed - user: "I don't see the value of it as it is") overlaid on the
     clip image; shown here as a table instead of a frame-by-frame viewer.
+
+    The "Used" column marks the contacts ``deployable_filter`` keeps, the set
+    the engine's cadence (since ``v1.33``) and GCT (since ``v1.34``) average
+    over. Without it the table listed every contact under a headline that
+    averaged only some of them, with nothing saying which.
     """
+    from src.utils.contact_filter import deployable_filter, presence_window
+
     contacts = list(getattr(analysis, "contacts", None) or [])
     fps = float(getattr(analysis, "fps", 0) or 0)
     n_total = len(contacts)
     n_refined = sum(1 for c in contacts if c.detection_method == "refined")
     refined_pct = (n_refined / n_total * 100) if n_total else 0
     strike_txt = (clip_strike_pattern or "unknown").capitalize()
+    lm = getattr(analysis, "selected_landmarks", None)
+    kept_ids = (
+        {
+            id(c)
+            for c in deployable_filter(contacts, presence_window(lm))["kept"]
+            if c.gct_ms is not None
+        }
+        if lm is not None
+        else set()
+    )
 
     st.markdown(
         '<p class="subsection-heading">Contact Tracker</p>'
@@ -1363,7 +1380,15 @@ def _render_contact_tracker(analysis, clip_strike_pattern):
         '<span class="hdr-pill-label">Refined</span>'
         f'<span class="hdr-pill-value">{n_refined} ({refined_pct:.0f}%)</span>'
         "</div>"
-        '<div class="hdr-pill">'
+        + (
+            '<div class="hdr-pill">'
+            '<span class="hdr-pill-label">Used in Averages</span>'
+            f'<span class="hdr-pill-value">{len(kept_ids)}</span>'
+            "</div>"
+            if kept_ids
+            else ""
+        )
+        + '<div class="hdr-pill">'
         '<span class="hdr-pill-label">Strike Pattern</span>'
         f'<span class="hdr-pill-value">{strike_txt}</span>'
         "</div>"
@@ -1398,16 +1423,34 @@ def _render_contact_tracker(analysis, clip_strike_pattern):
             f'<td data-label="Contact (IC)">{ic_txt}</td>'
             f'<td data-label="Toe-off (TO)">{to_txt}</td>'
             f'<td data-label="GCT">{gct_txt}</td>'
-            f'<td data-label="Strike">{contact_strike}</td></tr>'
+            f'<td data-label="Strike">{contact_strike}</td>'
+            + (
+                f'<td data-label="Used">{"Yes" if id(c) in kept_ids else "No"}</td>'
+                if kept_ids
+                else ""
+            )
+            + "</tr>"
         )
 
     st.markdown(
         '<table class="compare-table"><thead><tr>'
         "<th>#</th><th>Leg</th><th>Contact (IC)</th><th>Toe-off (TO)</th>"
         "<th>GCT</th><th>Strike</th>"
-        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>",
+        + ("<th>Used</th>" if kept_ids else "")
+        + "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>",
         unsafe_allow_html=True,
     )
+    if kept_ids:
+        st.markdown(
+            '<p class="section-sub">The engine\'s cadence and ground contact '
+            'time average only the contacts marked "Yes": fully refined, '
+            "starting and ending while the runner is in view, and not an outlier "
+            "in duration for this clip. The others are listed for completeness."
+            "</p>",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_metric_comparison_charts(m_fast, m_full, video_name):
