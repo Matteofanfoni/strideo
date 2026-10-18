@@ -49,10 +49,9 @@ logger = logging.getLogger(__name__)
 #: first RTMPose frame (upload plus the GPU container's start) and ~20 s after
 #: it, split here as ~18 s of RTMPose and ~2 s of engine as the earlier timing
 #: runs' ~19.5 s GPU pass suggests. ``blaze`` is the fast path's extraction,
-#: paid again only when its extraction is not reused: ~38 s live with serial
-#: passes, projected to ~23 s now they run concurrently (~31 s of passes
-#: halved), until the Space is re-timed.
-MODAL_PHASE_S = {"blaze": 23.0, "start": 13.0, "rtm": 18.0, "engine": 2.0}
+#: paid again only when its extraction is not reused: ~19 s live with the
+#: passes run concurrently (2026-10-18; it was ~38 s with serial passes).
+MODAL_PHASE_S = {"blaze": 19.0, "start": 13.0, "rtm": 18.0, "engine": 2.0}
 
 
 def modal_bands(reused_extraction: bool) -> Tuple[float, float, float]:
@@ -87,12 +86,11 @@ DEFAULT_ONNX_PATH = Path(__file__).parent.parent / "models" / "strideo_final.onn
 
 
 # Seconds to re-encode one 4K frame over seconds for BlazePose to process
-# one, on the live CPU Space: ~16 s to cap a clip to 300 frames against ~31 s
-# of serial BlazePose passes on those 300 (one fast-path run, 2026-10-17).
-# The passes now run concurrently in about half the time (measured
-# locally), so ~15.5 s here is a projection until the Space is re-timed.
+# one, on the live CPU Space: ~15 s to cap a clip to 300 frames against ~19 s
+# of the two BlazePose passes, run concurrently, on those 300 (one fast-path
+# run, 2026-10-18: 22 s of passes plus annotation, ~3 s of it annotation).
 # Sizes the "Preparing video" band against the pose band that follows it.
-ENCODE_TO_POSE_COST = 16.0 / 15.5
+ENCODE_TO_POSE_COST = 15.0 / 19.0
 
 
 def _prepare_video(
@@ -160,6 +158,11 @@ BREAKER_COOLDOWN_S = 600.0
 #: Upper bound on the engine thread's wait for the fast path's BlazePose,
 #: which always reports back (a failure too); a guard, not a timing.
 EXTRACTION_WAIT_S = 600.0
+
+#: Upper bound on the engine thread's wait for the Modal warm-up to answer
+#: before it sends the clip. A cold start is ~12 s live; past this the clip
+#: is sent anyway, so a hung warm-up can only cost what it was meant to save.
+WARM_WAIT_S = 45.0
 
 
 class _ModalBreaker:
@@ -247,11 +250,17 @@ def _run_engine_job(
     runner_height_cm: float,
     shoe_type: Optional[str],
     shoe_sole_cm: float,
+    warm: Optional[threading.Event] = None,
 ) -> None:
     """Thread body: RTMPose on Modal over the whole capped clip, then, once
     BlazePose is in, ``v1.35``'s presence window applied afterwards with
     ``mask_to_window`` (bit-identical inside the window to a windowed run,
     measured on every annotated clip) and the engine. Never falls back to a CPU RTMPose run.
+
+    ``warm`` is the event from ``warm_remote``, fired when the upload
+    started: the clip is sent only once that container has answered (or
+    ``WARM_WAIT_S`` passes), so the call lands on it rather than starting a
+    second one.
     """
     from src.preprocessing.pipeline import run_clip_pipeline
     from src.preprocessing.rtmpose_extractor import mask_to_window, rtmpose_window
@@ -261,6 +270,8 @@ def _run_engine_job(
     )
 
     try:
+        if warm is not None:
+            warm.wait(WARM_WAIT_S)
         try:
             rtm, _ = extract_rtmpose_remote(proc_path, None, None, 1)
         except RemoteRTMPoseError as exc:
@@ -312,16 +323,18 @@ def start_engine_job(
     runner_height_cm: float,
     shoe_type: Optional[str],
     shoe_sole_cm: float,
+    warm: Optional[threading.Event] = None,
 ) -> EngineJob:
     """Start the automatic engine for a prepared clip and return its job,
-    already ``"skipped"`` when the breaker is open."""
+    already ``"skipped"`` when the breaker is open. ``warm``: see
+    ``_run_engine_job``."""
     job = EngineJob()
     if not _BREAKER.allow():
         job._finish("skipped", reason="breaker open after repeated Modal failures")
         return job
     threading.Thread(
         target=_run_engine_job,
-        args=(job, proc_path, runner_height_cm, shoe_type, shoe_sole_cm),
+        args=(job, proc_path, runner_height_cm, shoe_type, shoe_sole_cm, warm),
         daemon=True,
     ).start()
     return job
@@ -418,13 +431,24 @@ def run_fast_path(
     if not Path(onnx_model_path).exists():
         raise OnnxModelMissingError(Path(onnx_model_path))
 
+    # Wake the GPU container now, so its ~12 s start-up overlaps video
+    # preparation instead of following it. Skipped when the breaker is open,
+    # since the engine job will not run then either.
+    warm = None
+    if engine_auto and _BREAKER.allow():
+        from src.preprocessing.rtmpose_remote import warm_remote
+
+        warm = warm_remote()
+
     # Extraction reports 0-0.90 and the NN and annotation own the rest, so
     # preparation takes the front of extraction's share and extraction is
     # squeezed into what is left of it.
     proc_path, prep_end = _prepare_video(video_path, progress, 0.90)
 
     engine_job = (
-        start_engine_job(proc_path, runner_height_cm, shoe_type, shoe_sole_cm)
+        start_engine_job(
+            proc_path, runner_height_cm, shoe_type, shoe_sole_cm, warm=warm
+        )
         if engine_auto
         else None
     )

@@ -13,6 +13,7 @@ code can ship before the privacy policy names Modal.
 
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import threading
@@ -36,9 +37,50 @@ WAIT_TICK_S = 0.5
 
 ProgressCallback = Callable[[int, int], None]
 
+logger = logging.getLogger(__name__)
+
 
 class RemoteRTMPoseError(RuntimeError):
     """The Modal call could not produce a usable result."""
+
+
+def warm_remote(cls: Any = None) -> threading.Event:
+    """Start a Modal GPU container ahead of the real call, without blocking.
+
+    The container's start-up (~12 s, model load included) then overlaps
+    whatever the caller does next, such as preparing the video. Wait on the
+    returned event before ``extract_rtmpose_remote``: a container takes one
+    call at a time, so a call sent while this one is still starting could
+    start a second container instead of reusing the first.
+
+    Never raises. A failure (no token, no ``warm`` method on an older
+    deploy, Modal down) is logged and still sets the event, so the real call
+    just pays the cold start it would have paid anyway.
+
+    Args:
+        cls: The Modal class, instead of looking up the deployed one; for
+            tests.
+
+    Returns:
+        An event set once the container has answered or the attempt failed.
+    """
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            target = cls
+            if target is None:
+                import modal
+
+                target = modal.Cls.from_name(APP_NAME, CLS_NAME)
+            target().warm.remote()
+        except Exception as exc:  # noqa: BLE001 - a warm-up is best effort
+            logger.info("Modal warm-up failed: %s", exc)
+        finally:
+            done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return done
 
 
 def remote_enabled() -> bool:
