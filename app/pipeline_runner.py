@@ -15,6 +15,7 @@ without duplicating the ~90-line RTMPose+progress-bar block.
 """
 
 import logging
+import math
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional, Tuple
@@ -39,6 +40,31 @@ from src.utils.metrics import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Seconds each phase of a Modal-backed Full Analysis takes, from the first
+#: live run on the CPU Upgrade Space (2026-10-18): ~13 s from the click to the
+#: first RTMPose frame (upload plus the GPU container's start) and ~20 s after
+#: it, split here as ~18 s of RTMPose and ~2 s of engine as the earlier timing
+#: runs' ~19.5 s GPU pass suggests. ``blaze`` is the fast path's ~38 s, paid
+#: again only when its extraction is not reused.
+MODAL_PHASE_S = {"blaze": 38.0, "start": 13.0, "rtm": 18.0, "engine": 2.0}
+
+
+def modal_bands(reused_extraction: bool) -> Tuple[float, float, float]:
+    """(blaze_end, start_end, rtm_stop) on the progress bar for the Modal path.
+
+    Each phase gets the bar's 0.02-1.0 span in proportion to its measured
+    seconds; BlazePose's band is empty when the fast path's extraction is
+    reused.
+    """
+    ph = MODAL_PHASE_S
+    blaze = 0.0 if reused_extraction else ph["blaze"]
+    total = blaze + ph["start"] + ph["rtm"] + ph["engine"]
+    blaze_end = 0.02 + 0.98 * blaze / total
+    start_end = blaze_end + 0.98 * ph["start"] / total
+    rtm_stop = start_end + 0.98 * ph["rtm"] / total
+    return blaze_end, start_end, rtm_stop
+
 
 # Ingest guardrail: the seeded pass (classical path) and the multi-pass
 # BlazePose extraction (both paths) buffer full-resolution frames
@@ -386,7 +412,13 @@ def run_full_analysis(
         blaze_end = 0.02 + 0.9 * (1.0 - rtm_end)
         return blaze_end, blaze_end + rtm_w
 
-    blaze_end, rtm_stop = _split(device)
+    # On the Modal path the bands come from the live run instead
+    # (``MODAL_PHASE_S``), with a band of its own for the GPU start-up.
+    if remote:
+        blaze_end, start_end, rtm_stop = modal_bands(extraction is not None)
+    else:
+        blaze_end, rtm_stop = _split(device)
+        start_end = blaze_end
 
     def _blaze_progress(stage, frac, _p=progress):
         if _p is not None:
@@ -402,10 +434,18 @@ def run_full_analysis(
         )
     window = rtmpose_window(extraction.selected_landmarks)
 
-    # RTMPose's band runs from ``bar["start"]`` to ``rtm_stop``. A fallback
-    # restarts it from wherever the Modal attempt left the bar, so the bar
+    # RTMPose's frames run from ``bar["start"]`` to ``rtm_stop``. A fallback
+    # restarts them from wherever the Modal attempt left the bar, so the bar
     # never moves backwards.
-    bar = {"start": blaze_end, "pos": blaze_end}
+    bar = {"start": start_end, "pos": blaze_end}
+
+    def _wait_progress(elapsed, _p=progress):
+        # Eases through the start-up band and never reaches its end, so the
+        # first frame event can only move the bar forward.
+        if _p is not None:
+            frac = 1.0 - math.exp(-elapsed / (MODAL_PHASE_S["start"] / 2))
+            bar["pos"] = blaze_end + frac * (start_end - blaze_end)
+            _p("Starting the GPU…", bar["pos"])
 
     def _rtm_progress(done, total, _p=progress):
         if _p is not None:
@@ -425,6 +465,7 @@ def run_full_analysis(
                 window,
                 extraction.skip_rate,
                 progress=_rtm_progress,
+                on_wait=_wait_progress,
             )
         except RemoteRTMPoseError as exc:
             logger.warning("Modal RTMPose failed (%s); running it on CPU", exc)

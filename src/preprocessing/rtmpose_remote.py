@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import queue
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple
 
@@ -30,6 +31,8 @@ CLS_NAME = "RTMPoseGPU"
 FIRST_EVENT_TIMEOUT_S = 60.0
 #: Seconds allowed between later events before the call counts as stalled.
 STALL_TIMEOUT_S = 30.0
+#: How often ``on_wait`` is called while waiting for the first event.
+WAIT_TICK_S = 0.5
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -57,6 +60,7 @@ def extract_rtmpose_remote(
     progress: Optional[ProgressCallback] = None,
     first_event_timeout_s: float = FIRST_EVENT_TIMEOUT_S,
     stall_timeout_s: float = STALL_TIMEOUT_S,
+    on_wait: Optional[Callable[[float], None]] = None,
     cls: Any = None,
 ) -> Tuple[RTMPoseResult, str]:
     """RTMPose-x for ``video_path`` on the Modal GPU.
@@ -69,6 +73,8 @@ def extract_rtmpose_remote(
         progress: Optional callback(done, total), as for the local call.
         first_event_timeout_s: Deadline for the first event.
         stall_timeout_s: Deadline between later events.
+        on_wait: Optional callback(seconds_elapsed), called about every
+            ``WAIT_TICK_S`` until the first event arrives.
         cls: The Modal class to call, instead of looking up the deployed
             one; for an ephemeral ``app.run()`` and for tests.
 
@@ -104,13 +110,33 @@ def extract_rtmpose_remote(
     # call is bounded by the Modal function's own timeout.
     threading.Thread(target=_consume, daemon=True).start()
 
-    timeout = first_event_timeout_s
+    # Before the first event (upload plus container start, ~13 s live) wake
+    # every WAIT_TICK_S so the caller's bar can keep moving.
+    started = time.monotonic()
+    first = True
     while True:
-        try:
-            event = events.get(timeout=timeout)
-        except queue.Empty:
-            raise RemoteRTMPoseError(f"no answer from Modal within {timeout:.0f}s")
-        timeout = stall_timeout_s
+        if first:
+            elapsed = time.monotonic() - started
+            if elapsed >= first_event_timeout_s:
+                raise RemoteRTMPoseError(
+                    f"no answer from Modal within {first_event_timeout_s:.0f}s"
+                )
+            try:
+                event = events.get(
+                    timeout=min(WAIT_TICK_S, first_event_timeout_s - elapsed)
+                )
+            except queue.Empty:
+                if on_wait is not None:
+                    on_wait(time.monotonic() - started)
+                continue
+            first = False
+        else:
+            try:
+                event = events.get(timeout=stall_timeout_s)
+            except queue.Empty:
+                raise RemoteRTMPoseError(
+                    f"no answer from Modal within {stall_timeout_s:.0f}s"
+                )
         kind = event[0]
         if kind == "progress":
             if progress is not None:
