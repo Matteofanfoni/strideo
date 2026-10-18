@@ -1162,11 +1162,6 @@ def _render_runner_banner(info):
     if not info:
         return
 
-    st.markdown(
-        '<p class="section-heading">Runner Information</p>',
-        unsafe_allow_html=True,
-    )
-
     pills = []
     if info.get("name"):
         pills.append(("Runner", info["name"]))
@@ -1185,18 +1180,6 @@ def _render_runner_banner(info):
             pb = info.get(pb_key)
             pills.append((label, f"{evt} ({pb})" if pb else evt))
 
-    if pills:
-        html = '<div class="hdr-strip">'
-        for label, value in pills:
-            html += (
-                '<div class="hdr-pill">'
-                f'<span class="hdr-pill-label">{label}</span>'
-                f'<span class="hdr-pill-value">{value}</span>'
-                "</div>"
-            )
-        html += "</div>"
-        st.markdown(html, unsafe_allow_html=True)
-
     # Estimated runner profile (targets/profile/VDOT/confidence) - own row,
     # below identity, in that order left-to-right (user feedback).
     pred = info.get("predicted_paces") or {}
@@ -1211,6 +1194,29 @@ def _render_runner_banner(info):
         pred_pills.append(("VDOT (est.)", f"≈ {pred['vdot']:.0f}"))
     if pred.get("confidence"):
         pred_pills.append(("Confidence", str(pred["confidence"])))
+
+    # The upload page always stores the dict, with blank values when the
+    # profile is skipped, so the heading waits until there is something to
+    # put under it.
+    if not (pills or pred_pills or pred):
+        return
+
+    st.markdown(
+        '<p class="section-heading">Runner Information</p>',
+        unsafe_allow_html=True,
+    )
+
+    if pills:
+        html = '<div class="hdr-strip">'
+        for label, value in pills:
+            html += (
+                '<div class="hdr-pill">'
+                f'<span class="hdr-pill-label">{label}</span>'
+                f'<span class="hdr-pill-value">{value}</span>'
+                "</div>"
+            )
+        html += "</div>"
+        st.markdown(html, unsafe_allow_html=True)
 
     if pred_pills:
         html = '<div class="hdr-strip">'
