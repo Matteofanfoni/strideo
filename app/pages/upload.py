@@ -1,6 +1,7 @@
 # app/pages/upload.py
 import streamlit as st
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -821,7 +822,13 @@ if analyze_clicked and num_uploaded > 0:
         # FiLM CNN (ONNX). RTMPose + the classical contact-detection pipeline
         # only run later, on request, via results.py's "Run Full Analysis".
         from src.preprocessing.calibration import SHOE_TYPES
-        from pipeline_runner import run_fast_path
+        from pipeline_runner import (
+            ENGINE_LANDING_WAIT_S,
+            engine_auto_enabled,
+            run_fast_path,
+        )
+
+        engine_auto = engine_auto_enabled()
 
         st.markdown(
             '<div class="prediction-box"><p class="up-note">'
@@ -880,6 +887,7 @@ if analyze_clicked and num_uploaded > 0:
                     shoe_sole_cm=shoe_sole_cm,
                     pace_level=pace_level,
                     progress=_fast_progress,
+                    engine_auto=engine_auto,
                 )
             except Exception as e:  # noqa: BLE001 - surface any pipeline failure
                 metrics_error = str(e)
@@ -966,9 +974,13 @@ if analyze_clicked and num_uploaded > 0:
                 "extraction_fast": (
                     fast_result.get("extraction") if fast_result else None
                 ),
-                # Populated later, per-clip, by results.py's "Run Full
-                # Analysis" (the classical pipeline is opt-in, not
-                # automatic). None until then.
+                # The automatic engine run on Modal, still going or
+                # finished; results.py moves a finished one into the fields
+                # below. None when the flag is off. Session-only, like
+                # extraction_fast.
+                "engine_job": (fast_result.get("engine_job") if fast_result else None),
+                # Populated later, per-clip, from engine_job or by
+                # results.py's "Run in-depth analysis" button. None until then.
                 "metrics_full": None,
                 "preprocessing_full": None,
                 "strike_pattern_full": None,
@@ -981,6 +993,16 @@ if analyze_clicked and num_uploaded > 0:
         st.markdown("---")
         successes = [r for r in all_results if r["metrics_fast"] is not None]
         if successes:
+            # Give the automatic engine a little longer, so Results usually
+            # opens complete; past that it opens with the engine pending and
+            # fills it in when it lands. One budget for the whole upload: the
+            # earlier clips' jobs have been running behind the later clips.
+            jobs = [r["engine_job"] for r in all_results if r.get("engine_job")]
+            if any(not j.finished for j in jobs):
+                with st.spinner("Finishing the in-depth analysis…"):
+                    deadline = time.monotonic() + ENGINE_LANDING_WAIT_S
+                    for job in jobs:
+                        job.wait(max(0.0, deadline - time.monotonic()))
             st.session_state["analysis_results"] = all_results
             if len(successes) < len(all_results):
                 n_failed = len(all_results) - len(successes)

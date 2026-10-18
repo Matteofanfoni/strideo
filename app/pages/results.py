@@ -3,7 +3,6 @@ import streamlit as st
 import sys
 import json
 import math
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +29,13 @@ from utils.elite_reference import (  # noqa: E402
     TIER_LABELS,
     elite_verdict,
     get_elite_ranges,
+)
+from pipeline_runner import engine_auto_enabled  # noqa: E402
+from utils.engine_results import (  # noqa: E402
+    ENGINE_POLL_S,
+    absorb_engine_job,
+    apply_full_analysis,
+    engine_pending,
 )
 
 st.set_page_config(
@@ -866,6 +872,9 @@ if not results:
 # every section except the Calculated Metrics pills, which show both,
 # source-labeled (add-only, not a silent overwrite).
 for r in results:
+    # A finished automatic engine run lands here, before anything
+    # reads metrics_full, exactly as the button's result would.
+    absorb_engine_job(r)
     r["metrics"] = r.get("metrics_full") or r.get("metrics_fast")
     r["preprocessing"] = r.get("preprocessing_full") or r.get("preprocessing_fast")
     r["strike_pattern"] = r.get("strike_pattern_full")
@@ -885,13 +894,21 @@ for r in results:
 results_with_metrics = [r for r in results if r.get("metrics") is not None]
 results_without_metrics = [r for r in results if r.get("metrics") is None]
 
+# With the automatic engine on, every clip gets the second check
+# without a click, so the lead stops telling the visitor to run it.
+_engine_lead = (
+    "Each clip is also checked a second, independent way by the "
+    "deterministic kinematics engine"
+    if engine_auto_enabled()
+    else "For any clip, run a second, independent check with the "
+    "deterministic kinematics engine"
+)
 st.markdown(
     f"""
 <p class="eyebrow">step 2 of 2</p>
 <h1 class="res-title">View your results</h1>
 <p class="res-lead">{len(results)} video{'s' if len(results) != 1 else ''}
-analyzed. Metrics below are StrideoNet's result by default. For any clip, run
-a second, independent check with the deterministic kinematics engine:
+analyzed. Metrics below are StrideoNet's result by default. {_engine_lead}:
 contact-by-contact timing, strike-pattern detection, full anatomical
 parameters, and a second opinion on every metric.</p>
 """,
@@ -1001,45 +1018,6 @@ def _cross_clip_metrics(r):
     fast path).
     """
     return r.get("metrics_fast") or r["metrics"]
-
-
-def _preprocessing_from_full(full_analysis, preprocessing_fast, direction):
-    """The ``preprocessing`` diagnostics for a clip once the deterministic
-    engine has run.
-
-    Most fields are recomputed from the engine's own ``pose_quality`` and
-    should overwrite the fast path's, since the two extractions really do
-    differ. ``torso_scale`` is the exception and is **carried forward**: it
-    comes out of ``preprocess_for_nn``'s hip-centred normalisation, which is
-    StrideoNet's input pipeline and something the engine never runs, so there
-    is no engine-side value to supply. It used to be hardcoded ``0.0`` here,
-    and because the page resolves ``preprocessing_full or preprocessing_fast``
-    the placeholder won outright: every clip the engine had been run on showed
-    "Torso scale 0.0000" while every other clip showed the real number. Torso
-    length is a property of the clip's landmarks rather than of which
-    estimator ran, so the fast path's value is the right one to keep.
-
-    Lives at module level, rather than inline where it is used, so it can be
-    tested: the call site sits inside a fragment callback that only runs after
-    a multi-minute RTMPose pass, which is why the placeholder shipped
-    unnoticed.
-    """
-    pq = full_analysis.pose_quality
-    presence = pq.get("presence_quality") or {}
-    return {
-        "nn_input_shape": None,
-        "mean_visibility": pq["mean_hip_visibility"],
-        "detection_rate": pq["detection_rate"] * 100.0,
-        "torso_scale": (preprocessing_fast or {}).get("torso_scale", 0.0),
-        "direction": direction,
-        # Frame statistics for the Video Information section (same
-        # fields as the fast path's own).
-        "total_frames": pq.get("total_frames"),
-        "detected_frames": pq.get("detected_frames"),
-        "frames_with_fill": pq.get("frames_with_fill"),
-        "presence_window_start": presence.get("window_start"),
-        "presence_window_end": presence.get("window_end"),
-    }
 
 
 def _render_header_strip(r, m, pre):
@@ -1845,8 +1823,12 @@ if results_with_metrics:
             + (
                 ""
                 if has_full
-                else " Want a second, independent check? Run it below: "
-                "it adds its own numbers alongside this result, "
+                else (
+                    " A second, independent check is running below: "
+                    if engine_pending(r)
+                    else " Want a second, independent check? Run it below: "
+                )
+                + "it adds its own numbers alongside this result, "
                 "source-labeled, so you can see how closely the two agree."
             )
         )
@@ -1890,8 +1872,19 @@ if results_with_metrics:
     # ``st.rerun(scope="app")`` below (not the bare, fragment-scoped
     # default) is what then refreshes those outside sections with the new
     # metrics_full once the run actually finishes.
-    @st.fragment
+    #
+    # While an automatic engine run is pending on any clip, the
+    # fragment re-runs itself every ENGINE_POLL_S; the first time it finds a
+    # finished job it reruns the app, whose top-of-page loop absorbs it.
+    _poll_engine = any(engine_pending(_x) for _x in results)
+
+    @st.fragment(run_every=ENGINE_POLL_S if _poll_engine else None)
     def _render_dke_section(r, m, m_fast):
+        if any(
+            _x.get("engine_job") is not None and _x["engine_job"].finished
+            for _x in results
+        ):
+            st.rerun(scope="app")
         with st.container():
             st.markdown('<span class="res-band-mark"></span>', unsafe_allow_html=True)
             analysis = r.get("analysis")
@@ -1913,6 +1906,15 @@ if results_with_metrics:
                 _render_contact_tracker(analysis, r.get("strike_pattern"))
                 if m_fast is not None:
                     _render_metric_comparison_charts(m_fast, m, r["video_name"])
+            elif engine_pending(r):
+                st.markdown(
+                    '<p class="section-sub">The deterministic kinematics engine, '
+                    "a second, independent computer-vision method (RTMPose-x + "
+                    "per-contact detection), is still running on this clip. Its "
+                    "numbers will appear here and alongside StrideoNet's above "
+                    "in a few seconds.</p>",
+                    unsafe_allow_html=True,
+                )
             else:
                 # `analysis` (aliasing `analysis_full`, a ClipAnalysis) is not
                 # JSON-serializable, so "Save results" drops it and a
@@ -2002,48 +2004,19 @@ if results_with_metrics:
                             progress=_full_progress,
                             extraction=r.get("extraction_fast"),
                         )
-                        if full_analysis.reliability.excluded:
-                            # The runner's presence window is
-                            # undefined, or tracking was lost mid-transit for longer
-                            # than gap-fill repairs -- numbers here would not be
-                            # trustworthy, so the clip's output is withheld rather
-                            # than displayed. metrics_full/analysis_full stay unset,
+                        # The same write the automatic engine's result gets
+                        # (utils/engine_results.py), so the two cannot drift.
+                        if not apply_full_analysis(r, full_analysis):
+                            # Excluded: metrics_full/analysis_full stay unset,
                             # so has_full_analysis stays False. Fragment-scoped
                             # rerun (bare st.rerun()) is enough: the warning this
                             # sets up is rendered by this same fragment, and
                             # nothing outside it depends on this flag.
-                            r["full_analysis_excluded"] = True
                             full_progress.progress(
                                 100, text="Tracking lost mid-run (100%)"
                             )
                             st.rerun()
                         else:
-                            from src.preprocessing.nn_preprocessing import (
-                                detect_running_direction,
-                            )
-
-                            # The engine measures oscillation 54.5% low against
-                            # annotated reference on 15 of 15 annotated clips,
-                            # and the fit that corrects it had only ever been
-                            # applied to StrideoNet's training labels -- so the
-                            # two estimators were showing this metric on scales
-                            # ~2x apart. The correction is applied HERE, at
-                            # display, and never in the pipeline: a corrected
-                            # stored value would have the validation report
-                            # scoring the fit against the clips it was fitted
-                            # on. See src/utils/vo_correction.py.
-                            r["metrics_full"] = correct_engine_metrics_for_display(
-                                asdict(full_analysis.metrics)
-                            )
-                            r["preprocessing_full"] = _preprocessing_from_full(
-                                full_analysis,
-                                r.get("preprocessing_fast"),
-                                detect_running_direction(
-                                    full_analysis.selected_landmarks
-                                ),
-                            )
-                            r["strike_pattern_full"] = full_analysis.clip_strike_pattern
-                            r["analysis_full"] = full_analysis
                             full_progress.progress(100, text="Complete! (100%)")
                             # App-scoped, not the fragment default: Calculated
                             # Metrics, the Agreement note, Elite Range
@@ -2789,6 +2762,8 @@ _EXPORT_EXCLUDE_KEYS = {
     # The fast path's BlazePoseExtraction (numpy arrays, a dataclass),
     # kept only so the in-depth run can skip a second BlazePose pass.
     "extraction_fast",
+    # The automatic engine run's EngineJob (a thread's state).
+    "engine_job",
     "analysis",
     "metrics",
     "preprocessing",

@@ -53,7 +53,7 @@ def _array(payload: dict, key: str) -> np.ndarray:
 
 def extract_rtmpose_remote(
     video_path: str,
-    n_frames: int,
+    n_frames: Optional[int],
     window: Optional[Tuple[int, int]],
     skip_rate: int,
     *,
@@ -67,7 +67,11 @@ def extract_rtmpose_remote(
 
     Args:
         video_path: The prepared (CFR, capped) clip, as for the local call.
-        n_frames: BlazePose's frame count; the result has this length.
+        n_frames: BlazePose's frame count; the result has this length. None
+            when the call starts before BlazePose has run (the app's
+            automatic engine): the whole clip is extracted, its length is not
+            checked here, and the caller compares it with BlazePose's.
+            Needs ``window`` None, since a window is in BlazePose's frames.
         window: Pose-frame window from ``rtmpose_window``, or None.
         skip_rate: BlazePose's ``skip_rate``.
         progress: Optional callback(done, total), as for the local call.
@@ -85,6 +89,8 @@ def extract_rtmpose_remote(
     Raises:
         RemoteRTMPoseError: On any failure; the caller falls back to local.
     """
+    if n_frames is None and window is not None:
+        raise ValueError("a window needs BlazePose's frame count")
     try:
         if cls is None:
             import modal
@@ -97,9 +103,11 @@ def extract_rtmpose_remote(
     events: "queue.Queue[tuple]" = queue.Queue()
 
     def _consume() -> None:
+        # With no window the remote side reads neither the frame count nor
+        # the skip rate, so 0 stands in for an unknown count.
         try:
             for event in cls().extract.remote_gen(
-                video, n_frames, list(window) if window else None, skip_rate
+                video, n_frames or 0, list(window) if window else None, skip_rate
             ):
                 events.put(event)
         except Exception as exc:
@@ -148,10 +156,8 @@ def extract_rtmpose_remote(
                 scores = _array(payload, "scores")
             except Exception as exc:
                 raise RemoteRTMPoseError(f"unreadable result: {exc}") from exc
-            if keypoints.shape != (n_frames, 133, 2) or scores.shape != (
-                n_frames,
-                133,
-            ):
+            n = len(keypoints) if n_frames is None else n_frames
+            if keypoints.shape != (n, 133, 2) or scores.shape != (n, 133):
                 raise RemoteRTMPoseError(
                     f"wrong shape {keypoints.shape}/{scores.shape} "
                     f"for {n_frames} frames"

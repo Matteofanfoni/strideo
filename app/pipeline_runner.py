@@ -16,9 +16,12 @@ without duplicating the ~90-line RTMPose+progress-bar block.
 
 import logging
 import math
+import os
+import threading
+import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import numpy as np
 
@@ -128,6 +131,198 @@ def _prepare_video(
     return proc_path, prep_end
 
 
+def engine_auto_enabled() -> bool:
+    """True when every upload also runs the engine on Modal
+    (``STRIDEO_ENGINE_AUTO=1``). Separate from ``STRIDEO_RTMPOSE_REMOTE``, which
+    only routes the Full Analysis button, so this can ship dark until the
+    privacy policy covers sending every upload to Modal."""
+    return os.environ.get("STRIDEO_ENGINE_AUTO", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+#: Seconds the upload page waits, after the fast path, for the automatic
+#: engine to finish before opening Results with the engine still pending.
+ENGINE_LANDING_WAIT_S = 15.0
+
+#: Consecutive Modal failures that open the breaker, and how long it stays
+#: open. Once Modal's credit is spent every call fails, and without this each
+#: visitor's automatic run would wait out the first-event timeout in turn.
+BREAKER_FAILURES = 3
+BREAKER_COOLDOWN_S = 600.0
+
+#: Upper bound on the engine thread's wait for the fast path's BlazePose,
+#: which always reports back (a failure too); a guard, not a timing.
+EXTRACTION_WAIT_S = 600.0
+
+
+class _ModalBreaker:
+    """Process-wide: after ``failures`` Modal failures in a row, refuse new
+    automatic runs for ``cooldown_s``. Only the automatic engine consults it;
+    the Full Analysis button keeps its own CPU fallback."""
+
+    def __init__(self, failures: int, cooldown_s: float):
+        self.failures = failures
+        self.cooldown_s = cooldown_s
+        self._lock = threading.Lock()
+        self._count = 0
+        self._open_until = 0.0
+
+    def allow(self) -> bool:
+        with self._lock:
+            return time.monotonic() >= self._open_until
+
+    def record(self, ok: bool) -> None:
+        with self._lock:
+            if ok:
+                self._count = 0
+                return
+            self._count += 1
+            if self._count >= self.failures:
+                self._count = 0
+                self._open_until = time.monotonic() + self.cooldown_s
+                logger.warning(
+                    "Modal failed %d times in a row; automatic engine off for %.0f s",
+                    self.failures,
+                    self.cooldown_s,
+                )
+
+
+_BREAKER = _ModalBreaker(BREAKER_FAILURES, BREAKER_COOLDOWN_S)
+
+
+class EngineJob:
+    """The automatic engine run for one clip, on its own thread.
+
+    ``status`` is ``"running"``, then one of ``"done"`` (``analysis`` holds the
+    ``ClipAnalysis``), ``"excluded"`` (the engine withheld its result, as
+    ``reliability.excluded`` does for the button) or ``"skipped"`` (Modal
+    unreachable or failed, the breaker open, the fast path failed, or a frame
+    count that does not match BlazePose's; ``reason`` says which). Only the
+    thread writes it and it never calls ``st.*``: the Results page reads it
+    on the script thread.
+    """
+
+    def __init__(self) -> None:
+        self.status = "running"
+        self.started = time.monotonic()
+        self.analysis: Any = None
+        self.reason: Optional[str] = None
+        self._finished = threading.Event()
+        self._extraction: Any = None
+        self._extraction_ready = threading.Event()
+
+    @property
+    def finished(self) -> bool:
+        return self._finished.is_set()
+
+    def wait(self, timeout: Optional[float]) -> bool:
+        """Block until the job ends or ``timeout`` passes; True if it ended."""
+        return self._finished.wait(timeout)
+
+    def provide_extraction(self, extraction: Any) -> None:
+        """Hand over the fast path's BlazePose extraction, or None if it
+        failed. Called exactly once by ``run_fast_path``."""
+        self._extraction = extraction
+        self._extraction_ready.set()
+
+    def _finish(self, status: str, analysis: Any = None, reason: Optional[str] = None):
+        self.analysis = analysis
+        self.reason = reason
+        self.status = status
+        self._finished.set()
+        if reason:
+            logger.info("Automatic engine %s: %s", status, reason)
+
+
+def _run_engine_job(
+    job: EngineJob,
+    proc_path: str,
+    runner_height_cm: float,
+    shoe_type: Optional[str],
+    shoe_sole_cm: float,
+) -> None:
+    """Thread body: RTMPose on Modal over the whole capped clip, then, once
+    BlazePose is in, ``v1.35``'s presence window applied afterwards with
+    ``mask_to_window`` (bit-identical inside the window to a windowed run,
+    measured on every annotated clip) and the engine. Never falls back to a CPU RTMPose run.
+    """
+    from src.preprocessing.pipeline import run_clip_pipeline
+    from src.preprocessing.rtmpose_extractor import mask_to_window, rtmpose_window
+    from src.preprocessing.rtmpose_remote import (
+        RemoteRTMPoseError,
+        extract_rtmpose_remote,
+    )
+
+    try:
+        try:
+            rtm, _ = extract_rtmpose_remote(proc_path, None, None, 1)
+        except RemoteRTMPoseError as exc:
+            _BREAKER.record(False)
+            job._finish("skipped", reason=f"Modal: {exc}")
+            return
+        _BREAKER.record(True)
+
+        if not job._extraction_ready.wait(EXTRACTION_WAIT_S):
+            job._finish("skipped", reason="no BlazePose extraction in time")
+            return
+        extraction = job._extraction
+        if extraction is None:
+            job._finish("skipped", reason="the fast path failed")
+            return
+        n_frames = len(extraction.selected_landmarks)
+        if len(rtm.keypoints) != n_frames:
+            job._finish(
+                "skipped",
+                reason=f"RTMPose has {len(rtm.keypoints)} frames, "
+                f"BlazePose {n_frames}",
+            )
+            return
+
+        window = rtmpose_window(extraction.selected_landmarks)
+        keypoints, scores = mask_to_window(rtm.keypoints, rtm.scores, window)
+        analysis = run_clip_pipeline(
+            proc_path,
+            runner_height_cm=runner_height_cm,
+            shoe_type=shoe_type,
+            shoe_sole_cm=shoe_sole_cm,
+            rtm_landmarks=keypoints,
+            rtm_scores=scores,
+            extraction=extraction,
+            rtm_window=window,
+        )
+        # ClipAnalysis annotates reliability as object (a ReliabilityAssessment).
+        if analysis.reliability.excluded:  # type: ignore[attr-defined]
+            job._finish("excluded", analysis=analysis)
+        else:
+            job._finish("done", analysis=analysis)
+    except Exception as exc:  # noqa: BLE001 - the button stays as the route
+        logger.exception("Automatic engine failed")
+        job._finish("skipped", reason=f"{type(exc).__name__}: {exc}")
+
+
+def start_engine_job(
+    proc_path: str,
+    runner_height_cm: float,
+    shoe_type: Optional[str],
+    shoe_sole_cm: float,
+) -> EngineJob:
+    """Start the automatic engine for a prepared clip and return its job,
+    already ``"skipped"`` when the breaker is open."""
+    job = EngineJob()
+    if not _BREAKER.allow():
+        job._finish("skipped", reason="breaker open after repeated Modal failures")
+        return job
+    threading.Thread(
+        target=_run_engine_job,
+        args=(job, proc_path, runner_height_cm, shoe_type, shoe_sole_cm),
+        daemon=True,
+    ).start()
+    return job
+
+
 class OnnxModelMissingError(RuntimeError):
     """Raised when the shipped ONNX model artifact isn't on disk."""
 
@@ -178,6 +373,7 @@ def run_fast_path(
     bidirectional: bool = True,
     seeded_pass: bool = False,
     pose_model_path: Optional[Path] = None,
+    engine_auto: bool = False,
 ) -> dict:
     """BlazePose-only path: extraction (steps 0-8) -> the shipped FiLM CNN
     (ONNX) -> a full ``BiomechanicalMetrics``-shaped dict, so
@@ -197,6 +393,10 @@ def run_fast_path(
     replication noise. ``pose_model_path`` still defaults to the shipped
     app's own model.
 
+    ``engine_auto`` starts the engine on Modal as soon as the
+    video is prepared, alongside BlazePose rather than after it; see
+    ``EngineJob``.
+
     Returns:
         {"metrics": dict (BiomechanicalMetrics fields), "preprocessing":
          dict (same diagnostics shape upload.py has always built), "overlay":
@@ -205,7 +405,8 @@ def run_fast_path(
          button needs to redraw the skeleton + metrics HUD later,
          without re-running extraction), "extraction": the
          ``BlazePoseExtraction`` itself, which ``run_full_analysis`` reuses
-         rather than running BlazePose a second time}
+         rather than running BlazePose a second time, "engine_job": the
+         ``EngineJob`` when ``engine_auto``, else None}
     """
     from src.inference.onnx_infer import OnnxStrideoInference
     from src.preprocessing.pipeline import extract_blazepose_landmarks_and_calibration
@@ -218,21 +419,32 @@ def run_fast_path(
     # squeezed into what is left of it.
     proc_path, prep_end = _prepare_video(video_path, progress, 0.90)
 
+    engine_job = (
+        start_engine_job(proc_path, runner_height_cm, shoe_type, shoe_sole_cm)
+        if engine_auto
+        else None
+    )
+
     def _extract_progress(stage, frac, _p=progress):
         if _p is not None:
             _p(stage, prep_end + frac * (0.90 - prep_end) / 0.90)
 
-    extraction = extract_blazepose_landmarks_and_calibration(
-        proc_path,
-        runner_height_cm,
-        shoe_sole_cm=shoe_sole_cm,
-        shoe_type=shoe_type,
-        bidirectional=bidirectional,
-        seeded_pass=seeded_pass,
-        prune_spurious_contacts=True,  # also the source of the velocity estimate
-        pose_model_path=pose_model_path,
-        progress=_extract_progress,
-    )
+    extraction = None
+    try:
+        extraction = extract_blazepose_landmarks_and_calibration(
+            proc_path,
+            runner_height_cm,
+            shoe_sole_cm=shoe_sole_cm,
+            shoe_type=shoe_type,
+            bidirectional=bidirectional,
+            seeded_pass=seeded_pass,
+            prune_spurious_contacts=True,  # also the source of the velocity estimate
+            pose_model_path=pose_model_path,
+            progress=_extract_progress,
+        )
+    finally:
+        if engine_job is not None:
+            engine_job.provide_extraction(extraction)
 
     preprocessing, nn_input = _diagnostics_from_extraction(extraction)
 
@@ -321,6 +533,7 @@ def run_fast_path(
         "preprocessing": preprocessing,
         "overlay": overlay,
         "extraction": extraction,
+        "engine_job": engine_job,
     }
 
 
