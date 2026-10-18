@@ -14,6 +14,7 @@ Previously both lived inline in ``app/pages/upload.py``; factored out so
 without duplicating the ~90-line RTMPose+progress-bar block.
 """
 
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional, Tuple
@@ -36,6 +37,8 @@ from src.utils.metrics import (
     calculate_vertical_oscillation_ratio,
     calculate_velocity,
 )
+
+logger = logging.getLogger(__name__)
 
 # Ingest guardrail: the seeded pass (classical path) and the multi-pass
 # BlazePose extraction (both paths) buffer full-resolution frames
@@ -328,6 +331,11 @@ def run_full_analysis(
         load_rtmpose,
         rtmpose_window,
     )
+    from src.preprocessing.rtmpose_remote import (
+        RemoteRTMPoseError,
+        extract_rtmpose_remote,
+        remote_enabled,
+    )
 
     if extraction is not None:
         proc_path = extraction.cfr_path
@@ -336,9 +344,17 @@ def run_full_analysis(
         # there at most; RTMPose dwarfs it on this path.
         proc_path, _ = _prepare_video(video_path, progress, 0.02)
 
-    if progress is not None:
-        progress("Loading RTMPose model…", 0.01)
-    rtm_model, device = load_rtmpose()
+    # RTMPose goes to the Modal GPU when enabled, else, or when that
+    # fails, runs here on CPU. The local model is only built when needed:
+    # building it is wasted time when Modal answers.
+    remote = remote_enabled()
+    rtm_model = None
+    if remote:
+        device = "cuda"
+    else:
+        if progress is not None:
+            progress("Loading RTMPose model…", 0.01)
+        rtm_model, device = load_rtmpose()
 
     # RTMPose's share of the bar depends on which device it actually runs
     # on - a single fixed split can't be right for both, since GPU doesn't
@@ -351,8 +367,8 @@ def run_full_analysis(
     # CPU tier to the majority of the wall-clock at GPU tier. The previous
     # single CPU-calibrated split (0.92/0.08) made the bar look badly
     # front-loaded once GPU tier flipped which phase is slower. ``device`` is
-    # the one the built session runs on, not what onnxruntime-gpu lists.
-    rtm_end = 0.40 if device == "cuda" else 0.92
+    # the one the built session runs on, not what onnxruntime-gpu lists; on
+    # the Modal path it is assumed "cuda" until a fallback says otherwise.
     # BlazePose comes first, so RTMPose can be windowed on its
     # presence window. The phases keep their measured widths: RTMPose
     # (rtm_end - 0.02), and the rest, ~90% of which is BlazePose (its two
@@ -361,14 +377,16 @@ def run_full_analysis(
     # what is left after RTMPose is only the engine, the other ~10% of the
     # rest, so the bar is re-divided between those two: RTMPose then ends
     # at ~0.99 on CPU and ~0.87 on GPU, not at rtm_end.
-    rtm_w = rtm_end - 0.02
-    if extraction is not None:
-        engine_w = 0.1 * (1.0 - rtm_end)
-        blaze_end = 0.02
-        rtm_stop = 0.02 + 0.98 * rtm_w / (rtm_w + engine_w)
-    else:
+    def _split(dev: str) -> tuple:
+        rtm_end = 0.40 if dev == "cuda" else 0.92
+        rtm_w = rtm_end - 0.02
+        if extraction is not None:
+            engine_w = 0.1 * (1.0 - rtm_end)
+            return 0.02, 0.02 + 0.98 * rtm_w / (rtm_w + engine_w)
         blaze_end = 0.02 + 0.9 * (1.0 - rtm_end)
-        rtm_stop = blaze_end + rtm_w
+        return blaze_end, blaze_end + rtm_w
+
+    blaze_end, rtm_stop = _split(device)
 
     def _blaze_progress(stage, frac, _p=progress):
         if _p is not None:
@@ -384,23 +402,49 @@ def run_full_analysis(
         )
     window = rtmpose_window(extraction.selected_landmarks)
 
+    # RTMPose's band runs from ``bar["start"]`` to ``rtm_stop``. A fallback
+    # restarts it from wherever the Modal attempt left the bar, so the bar
+    # never moves backwards.
+    bar = {"start": blaze_end, "pos": blaze_end}
+
     def _rtm_progress(done, total, _p=progress):
         if _p is not None:
             frac = (done / total) if total else 0.0
-            _p(
-                f"RTMPose pose estimation… frame {done}/{total}",
-                blaze_end + frac * (rtm_stop - blaze_end),
-            )
+            bar["pos"] = bar["start"] + frac * (rtm_stop - bar["start"])
+            _p(f"RTMPose pose estimation… frame {done}/{total}", bar["pos"])
 
-    rtm = extract_rtmpose_landmarks_windowed(
-        proc_path,
-        len(extraction.selected_landmarks),
-        window,
-        extraction.skip_rate,
-        device=device,
-        progress=_rtm_progress,
-        model=rtm_model,
-    )
+    n_frames = len(extraction.selected_landmarks)
+    rtm = None
+    if remote:
+        if progress is not None:
+            progress("Starting the GPU…", bar["pos"])
+        try:
+            rtm, _ = extract_rtmpose_remote(
+                proc_path,
+                n_frames,
+                window,
+                extraction.skip_rate,
+                progress=_rtm_progress,
+            )
+        except RemoteRTMPoseError as exc:
+            logger.warning("Modal RTMPose failed (%s); running it on CPU", exc)
+    if rtm is None:
+        if rtm_model is None:
+            if progress is not None:
+                progress("Loading RTMPose model…", bar["pos"])
+            rtm_model, device = load_rtmpose()
+            _, rtm_stop = _split(device)
+            rtm_stop = max(rtm_stop, bar["pos"])
+            bar["start"] = bar["pos"]
+        rtm = extract_rtmpose_landmarks_windowed(
+            proc_path,
+            n_frames,
+            window,
+            extraction.skip_rate,
+            device=device,
+            progress=_rtm_progress,
+            model=rtm_model,
+        )
 
     def _pipe_progress(stage, frac, _p=progress):
         if _p is not None:

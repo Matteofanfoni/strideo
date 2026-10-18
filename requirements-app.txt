@@ -47,6 +47,11 @@ rtmlib>=0.0.15                  # thin RTMPose wrapper (pure-python, 61 KB).
                                 # install` — the Dockerfile's post-install
                                 # uninstall+force-reinstall step undoes
                                 # that; this file alone is not sufficient.
+modal==1.6.2                    # client for RTMPose-x on a Modal GPU
+                                # (src/preprocessing/rtmpose_remote.py). Only
+                                # used when STRIDEO_RTMPOSE_REMOTE=modal and
+                                # the Space has MODAL_TOKEN_ID/SECRET; else
+                                # Full Analysis runs RTMPose on CPU as before.
 pydantic>=2.0.0                 # metadata models
 requests>=2.31.0                # contact form POST + reCAPTCHA siteverify call
 

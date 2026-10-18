@@ -1172,7 +1172,17 @@ def render_navbar(active: str = "") -> None:
     unconditionally on every page, not only when actually on it (Streamlit
     1.54, confirmed live), so "Home" stayed bold everywhere. Pages with no nav
     entry (e.g. the legal pages) pass no ``active`` and nothing highlights.
+
+    Every page calls this on every run, which makes it the one place that
+    runs on each interaction anywhere in the app, so it also keeps the
+    visitor's upload folder alive and deletes idle ones
+    (``utils.session_files``; the privacy policy promises deletion within an
+    hour of the last activity).
     """
+    from utils.session_files import on_page_run
+
+    on_page_run(st.session_state.get("session_id"))
+
     cols = st.columns([2.2, 1.0, 1.0, 1.0, 1.7], vertical_alignment="center")
     cols[0].markdown(
         f'<div class="nav-brand-row"><span class="nav-brand-badge">'

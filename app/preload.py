@@ -13,10 +13,7 @@ crash the app.
 
 from __future__ import annotations
 
-import shutil
 import sys
-import tempfile
-import time
 import urllib.request
 from pathlib import Path
 
@@ -53,25 +50,17 @@ def _log_env_versions() -> None:
         print(f"[preload] WARNING: version probe failed: {exc}", flush=True)
 
 
-def _clean_stale_sessions(max_age_hours: float = 4.0) -> None:
-    """Remove per-session upload dirs older than max_age_hours.
+def _clean_stale_sessions() -> None:
+    """Remove idle per-session upload dirs at container start.
 
-    Each browser session writes to tempdir/strideo_sessions/<uuid12>/. On HF
-    Spaces container restarts clear /tmp entirely, but within a long-running
-    container these dirs accumulate. We sweep on startup to bound disk use.
-    Sessions younger than max_age_hours are left alone so the results scrubber
-    keeps working for active users.
+    The same rule as every page run's sweep (``utils.session_files``): a
+    folder untouched for an hour is deleted. That per-run sweep is what keeps
+    the privacy policy true on a container that runs for weeks; this one only
+    clears what a restart left behind before the first visitor arrives.
     """
-    sessions_root = Path(tempfile.gettempdir()) / "strideo_sessions"
-    if not sessions_root.exists():
-        return
-    cutoff = time.time() - max_age_hours * 3600
-    for session_dir in sessions_root.iterdir():
-        try:
-            if session_dir.is_dir() and session_dir.stat().st_mtime < cutoff:
-                shutil.rmtree(session_dir, ignore_errors=True)
-        except OSError:
-            pass
+    from utils.session_files import sweep_idle_sessions
+
+    sweep_idle_sessions(force=True)
 
 
 def _download_mediapipe() -> None:

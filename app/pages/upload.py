@@ -1,7 +1,6 @@
 # app/pages/upload.py
 import streamlit as st
 import sys
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -26,6 +25,7 @@ from src.utils.pace_predictor import (  # noqa: E402
     predict_paces,
 )
 from pipeline_runner import MAX_PIPELINE_FRAMES  # noqa: E402
+from utils.session_files import session_dir  # noqa: E402
 
 st.set_page_config(
     page_title="Upload | strideo.it",
@@ -526,13 +526,11 @@ st.session_state["predicted_clip_paces"] = (
 
 # Per-session temp directory: concurrent visitors on the shared HF container
 # must not clobber each other's uploads. Each browser session gets an isolated
-# directory under the system temp dir; clips are processed transiently.
+# directory under the system temp dir, deleted an hour after the visitor's
+# last page run (utils.session_files, swept from render_navbar).
 if "session_id" not in st.session_state:
     st.session_state["session_id"] = uuid.uuid4().hex[:12]
-uploads_dir = (
-    Path(tempfile.gettempdir()) / "strideo_sessions" / st.session_state["session_id"]
-)
-uploads_dir.mkdir(parents=True, exist_ok=True)
+uploads_dir = session_dir(st.session_state["session_id"])
 
 MAX_CLIPS = 3
 VALID_EXTS = {".mp4", ".mov", ".m4v", ".avi", ".webm"}
@@ -636,8 +634,9 @@ with st.container():
 
     st.markdown(
         '<p class="up-note muted" style="margin-bottom:24px !important;">'
-        "Clips are analysed on the spot and are never "
-        'stored or shared - see the <a href="/privacy_policy" target="_blank">'
+        "Clips are used only for your analysis and are deleted within an "
+        "hour of your last activity. See the "
+        '<a href="/privacy_policy" target="_blank">'
         "Privacy Policy</a> for details.</p>",
         unsafe_allow_html=True,
     )
