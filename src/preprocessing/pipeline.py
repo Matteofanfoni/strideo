@@ -266,6 +266,7 @@ def extract_blazepose_landmarks_and_calibration(
     prune_spurious_contacts: bool = True,
     pose_model_path: Optional[Path] = None,
     progress: Optional[ProgressCallback] = None,
+    concurrent_passes: bool = False,
 ) -> BlazePoseExtraction:
     """Run the BlazePose-only prefix of the v1.20 pipeline: VFR->CFR through
     gap-fill, pose-quality metrics, the final spatial calibration, and
@@ -283,6 +284,13 @@ def extract_blazepose_landmarks_and_calibration(
             model (MODEL_HEAVY) — added for speed-option measurement,
             not otherwise exposed to callers.
         progress: Optional callback(stage_label, fraction_0_to_1) for UI.
+            Always called on the caller's thread.
+        concurrent_passes: Run the reverse pass in a worker thread while
+            the forward pass runs, when ``bidirectional``. Each pass uses
+            ~1.4 of 8 CPUs, so this halves their wall-clock, and the
+            landmarks are bit-identical to the serial passes on every clip
+            measured.
+            Off by default; the app turns it on.
 
     Returns:
         BlazePoseExtraction with everything a BlazePose-only or a
@@ -339,30 +347,72 @@ def extract_blazepose_landmarks_and_calibration(
     _emit("Preparing video", 0.02)
     cfr_path, _ = ensure_cfr(video_path)
 
-    # 1. Forward pose pass (v1.0 config: VIDEO + num_poses=1 + det_conf=0.5)
-    _emit("Pose estimation (forward)", 0.02)
-    pose_result, video_meta = extract_pose_landmarks_streaming(
-        cfr_path,
-        num_poses=1,
-        running_mode="video",
-        min_pose_detection_confidence=0.5,
-        model_path=resolved_model_path,
-        frame_progress=_band("Pose estimation (forward)", 0.02, fwd_hi),
-    )
+    def _forward(frame_progress):
+        # v1.0 config: VIDEO + num_poses=1 + det_conf=0.5
+        return extract_pose_landmarks_streaming(
+            cfr_path,
+            num_poses=1,
+            running_mode="video",
+            min_pose_detection_confidence=0.5,
+            model_path=resolved_model_path,
+            frame_progress=frame_progress,
+        )
+
+    pose_result_rev = None
+    if bidirectional and concurrent_passes:
+        # 1+2. Forward here, reverse (v1.6) in a worker. The worker only
+        # records its fraction: progress must stay on this thread (a
+        # Streamlit bar cannot be updated from another one).
+        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as _FutureTimeout
+
+        fracs = {"fwd": 0.0, "rev": 0.0}
+        both = _band("Pose estimation", 0.02, 0.88)
+
+        def _report() -> None:
+            if both is not None:
+                both((fracs["fwd"] + fracs["rev"]) / 2.0)
+
+        def _fwd_frac(f: float) -> None:
+            fracs["fwd"] = f
+            _report()
+
+        def _rev_frac(f: float) -> None:
+            fracs["rev"] = f
+
+        _emit("Pose estimation", 0.02)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            rev_future = pool.submit(
+                extract_pose_landmarks_streaming_reverse,
+                cfr_path,
+                model_path=resolved_model_path,
+                frame_progress=_rev_frac,
+            )
+            pose_result, video_meta = _forward(_fwd_frac)
+            while True:
+                try:
+                    pose_result_rev, _ = rev_future.result(timeout=0.25)
+                    break
+                except _FutureTimeout:
+                    _report()
+    else:
+        # 1. Forward pose pass
+        _emit("Pose estimation (forward)", 0.02)
+        pose_result, video_meta = _forward(
+            _band("Pose estimation (forward)", 0.02, fwd_hi)
+        )
+        # 2. Reverse pose pass (v1.6)
+        if bidirectional:
+            _emit("Pose estimation (reverse)", 0.45)
+            pose_result_rev, _ = extract_pose_landmarks_streaming_reverse(
+                cfr_path,
+                model_path=resolved_model_path,
+                frame_progress=_band("Pose estimation (reverse)", 0.45, 0.88),
+            )
     fps = video_meta["effective_fps"]
     res_h = video_meta["height"]
     res_w = video_meta["width"]
     skip_rate = video_meta["skip_rate"]
-
-    # 2. Reverse pose pass (v1.6)
-    pose_result_rev = None
-    if bidirectional:
-        _emit("Pose estimation (reverse)", 0.45)
-        pose_result_rev, _ = extract_pose_landmarks_streaming_reverse(
-            cfr_path,
-            model_path=resolved_model_path,
-            frame_progress=_band("Pose estimation (reverse)", 0.45, 0.88),
-        )
 
     # 3. Bootstrap calibration + body height (px) for downstream gates
     # In a headless Docker environment MediaPipe's EGL context may degrade,

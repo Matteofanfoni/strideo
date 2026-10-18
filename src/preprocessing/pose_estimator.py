@@ -519,6 +519,8 @@ def extract_pose_landmarks_streaming_reverse(
     progress_every: int = 60,
     model_path: Path = MODEL_HEAVY,
     frame_progress: Optional[Callable[[float], None]] = None,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
 ) -> Tuple[PoseExtractionResult, Dict]:
     """
     Extract pose landmarks from a video file with frames fed in reverse
@@ -559,6 +561,10 @@ def extract_pose_landmarks_streaming_reverse(
             of this pass's loops, since the RAM-buffering loop is a real
             share of its wall-clock: buffering reports 0 -> BUFFER_WEIGHT,
             detection BUFFER_WEIGHT -> 1.
+        start_frame / end_frame: Source-frame window to process, inclusive,
+            as in ``extract_pose_landmarks_streaming``, so both passes can
+            read the same range of an uncapped file. The reverse feed starts
+            at ``end_frame`` (default: the last frame).
 
     Returns:
         result: PoseExtractionResult in source-frame order (index 0 =
@@ -593,15 +599,21 @@ def extract_pose_landmarks_streaming_reverse(
     # below; the rest belongs to the MediaPipe detection loop. Decoding 4K is
     # cheap next to inference, hence the small slice.
     buffer_weight = 0.25
-    expected_buffered = (
-        (total_frames + skip_rate - 1) // skip_rate if total_frames > 0 else 0
+    if start_frame > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    resolved_end = (
+        total_frames - 1 if end_frame is None else min(end_frame, total_frames - 1)
     )
+    window_frames = max(0, resolved_end - start_frame + 1)
+    expected_buffered = (window_frames + skip_rate - 1) // skip_rate
 
     frames_rgb: List[np.ndarray] = []
     frame_idx = 0
     while True:
         ret, frame = cap.read()
         if not ret:
+            break
+        if start_frame + frame_idx > resolved_end:
             break
         if frame_idx % skip_rate == 0:
             frames_rgb.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -701,6 +713,8 @@ def extract_pose_landmarks_streaming_reverse(
         "duration_seconds": duration,
         "skip_rate": skip_rate,
         "pass_direction": "reverse",
+        "start_frame": int(start_frame),
+        "end_frame": int(resolved_end),
     }
 
     result_obj = PoseExtractionResult(

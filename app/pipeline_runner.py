@@ -48,9 +48,11 @@ logger = logging.getLogger(__name__)
 #: live run on the CPU Upgrade Space (2026-10-18): ~13 s from the click to the
 #: first RTMPose frame (upload plus the GPU container's start) and ~20 s after
 #: it, split here as ~18 s of RTMPose and ~2 s of engine as the earlier timing
-#: runs' ~19.5 s GPU pass suggests. ``blaze`` is the fast path's ~38 s, paid
-#: again only when its extraction is not reused.
-MODAL_PHASE_S = {"blaze": 38.0, "start": 13.0, "rtm": 18.0, "engine": 2.0}
+#: runs' ~19.5 s GPU pass suggests. ``blaze`` is the fast path's extraction,
+#: paid again only when its extraction is not reused: ~38 s live with serial
+#: passes, projected to ~23 s now they run concurrently (~31 s of passes
+#: halved), until the Space is re-timed.
+MODAL_PHASE_S = {"blaze": 23.0, "start": 13.0, "rtm": 18.0, "engine": 2.0}
 
 
 def modal_bands(reused_extraction: bool) -> Tuple[float, float, float]:
@@ -86,9 +88,11 @@ DEFAULT_ONNX_PATH = Path(__file__).parent.parent / "models" / "strideo_final.onn
 
 # Seconds to re-encode one 4K frame over seconds for BlazePose to process
 # one, on the live CPU Space: ~16 s to cap a clip to 300 frames against ~31 s
-# of BlazePose passes on those 300 (one fast-path run, 2026-10-17). Sizes
-# the "Preparing video" band against the pose band that follows it.
-ENCODE_TO_POSE_COST = 16.0 / 31.0
+# of serial BlazePose passes on those 300 (one fast-path run, 2026-10-17).
+# The passes now run concurrently in about half the time (measured
+# locally), so ~15.5 s here is a projection until the Space is re-timed.
+# Sizes the "Preparing video" band against the pose band that follows it.
+ENCODE_TO_POSE_COST = 16.0 / 15.5
 
 
 def _prepare_video(
@@ -441,6 +445,7 @@ def run_fast_path(
             prune_spurious_contacts=True,  # also the source of the velocity estimate
             pose_model_path=pose_model_path,
             progress=_extract_progress,
+            concurrent_passes=True,
         )
     finally:
         if engine_job is not None:
@@ -515,7 +520,7 @@ def run_fast_path(
     )
 
     # Stops at 0.90, not 1.0: the caller still has the annotated-video encode
-    # to do (~3 s against this function's ~27 s of pose passes), and owns the
+    # to do (~3 s against this function's ~15 s of concurrent pose passes), and owns the
     # last tenth of the bar so it can walk it frame by frame rather than
     # jumping 95 -> 100 around a silent step.
     if progress is not None:
@@ -644,6 +649,7 @@ def run_full_analysis(
             shoe_sole_cm=shoe_sole_cm,
             shoe_type=shoe_type,
             progress=_blaze_progress,
+            concurrent_passes=True,
         )
     window = rtmpose_window(extraction.selected_landmarks)
 
