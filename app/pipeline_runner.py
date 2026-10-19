@@ -266,14 +266,14 @@ def _run_engine_job(
     from src.preprocessing.rtmpose_extractor import mask_to_window, rtmpose_window
     from src.preprocessing.rtmpose_remote import (
         RemoteRTMPoseError,
-        extract_rtmpose_remote,
+        extract_rtmpose_remote_parallel,
     )
 
     try:
         if warm is not None:
             warm.wait(WARM_WAIT_S)
         try:
-            rtm, _ = extract_rtmpose_remote(proc_path, None, None, 1)
+            rtm, _ = extract_rtmpose_remote_parallel(proc_path, None, None, 1)
         except RemoteRTMPoseError as exc:
             _BREAKER.record(False)
             job._finish("skipped", reason=f"Modal: {exc}")
@@ -601,7 +601,7 @@ def run_full_analysis(
     )
     from src.preprocessing.rtmpose_remote import (
         RemoteRTMPoseError,
-        extract_rtmpose_remote,
+        extract_rtmpose_remote_parallel,
         remote_enabled,
     )
 
@@ -702,7 +702,7 @@ def run_full_analysis(
         if progress is not None:
             progress("Starting the GPU…", bar["pos"])
         try:
-            rtm, _ = extract_rtmpose_remote(
+            rtm, _ = extract_rtmpose_remote_parallel(
                 proc_path,
                 n_frames,
                 window,
