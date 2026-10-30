@@ -8,9 +8,13 @@ promises they are deleted within an hour of the visitor's last activity.
 Until 2026-10-18 the only sweep ran once, at container start
 (``preload._clean_stale_sessions``, 4 hours), and since the Space is set
 never to sleep a container could run for weeks: uploads stayed on disk long
-after the policy said they were gone. Now every page run marks the current
-visitor's folder as active, and sweeps idle ones at most every
-``SWEEP_INTERVAL_S``.
+after the policy said they were gone. From then every page run marked the
+current visitor's folder as active and swept idle ones.
+
+That still needed traffic: a folder outlived the hour until someone else
+opened a page, which on a quiet Space could be days. So the
+first page run in a process also starts a background sweeper, and the idle
+limit plus the sweep interval add up to exactly the hour the policy states.
 """
 
 from __future__ import annotations
@@ -18,14 +22,22 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Optional
 
-#: A folder untouched for this long belongs to a visitor who has left.
-SESSION_MAX_IDLE_S = 3600
-#: The sweep is a directory listing; this bounds how often a page run pays it.
-SWEEP_INTERVAL_S = 300
+#: The hour the privacy policy promises, from last activity to deletion.
+PROMISED_MAX_S = 3600
+#: How often the background sweeper runs; the sweep is a directory listing.
+SWEEP_INTERVAL_S = 60
+#: A folder untouched for this long belongs to a visitor who has left. Set so
+#: that a folder going idle just after a sweep is still gone within the hour.
+SESSION_MAX_IDLE_S = PROMISED_MAX_S - SWEEP_INTERVAL_S
+
+_SWEEPER_NAME = "strideo-session-sweeper"
+_sweeper_lock = threading.Lock()
+_stop_sweeper = threading.Event()
 
 _last_sweep = 0.0
 
@@ -84,7 +96,49 @@ def sweep_idle_sessions(
     return removed
 
 
+def _sweep_until_stopped(interval_s: float) -> None:
+    while not _stop_sweeper.wait(interval_s):
+        try:
+            sweep_idle_sessions(force=True)
+        except Exception:  # noqa: BLE001 - a failed sweep must not end the loop
+            pass
+
+
+def start_sweeper(interval_s: float = SWEEP_INTERVAL_S) -> threading.Thread:
+    """Start the background sweeper once per process; return the running one.
+
+    Found by thread name rather than a module flag, so a module re-import
+    (Streamlit's dev reloader) does not start a second one.
+    """
+    with _sweeper_lock:
+        for thread in threading.enumerate():
+            if thread.name == _SWEEPER_NAME and thread.is_alive():
+                return thread
+        _stop_sweeper.clear()
+        thread = threading.Thread(
+            target=_sweep_until_stopped,
+            args=(interval_s,),
+            name=_SWEEPER_NAME,
+            daemon=True,
+        )
+        thread.start()
+        return thread
+
+
+def stop_sweeper(timeout_s: float = 5.0) -> None:
+    """Stop the background sweeper (tests only; the app never stops it)."""
+    _stop_sweeper.set()
+    for thread in threading.enumerate():
+        if thread.name == _SWEEPER_NAME:
+            thread.join(timeout_s)
+
+
 def on_page_run(session_id: Optional[str]) -> None:
-    """Called on every page run: keep this visitor's folder, drop idle ones."""
+    """Called on every page run: keep this visitor's folder, drop idle ones.
+
+    Also makes sure the background sweeper is running, which is what keeps
+    the hour when nobody opens a page.
+    """
     mark_active(session_id)
+    start_sweeper()
     sweep_idle_sessions()

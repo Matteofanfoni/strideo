@@ -78,6 +78,12 @@ def modal_bands(reused_extraction: bool) -> Tuple[float, float, float]:
 # carrying its own copy.
 MAX_PIPELINE_FRAMES = 300
 
+#: Cut the capped clip by stream copy (``cap_frames(stream_copy=True)``)
+#: instead of re-encoding it: ~0.06 s instead of ~5 s locally, ~15 s live,
+#: and the kept frames are the upload's own pixels, as the CLI sees them,
+#: except the last. Off until scored against the annotated clips.
+CAP_STREAM_COPY = False
+
 # The shipped artifact. Not in git (see models/*.onnx in .gitignore) —
 # present on any machine that ran scripts/export_final_model_to_onnx.py.
 # F6 (deploy) is the item that gets this artifact onto the deployed target;
@@ -111,7 +117,10 @@ def _prepare_video(
     convert = needs_cfr_conversion(video_path)
     n = converted_frame_count(video_path) if convert else frame_count(video_path)
     convert_frames = n if convert else 0
-    cap_n = MAX_PIPELINE_FRAMES if n > MAX_PIPELINE_FRAMES else 0
+    # A stream-copy cut takes no measurable time, so it gets no band.
+    cap_n = (
+        MAX_PIPELINE_FRAMES if n > MAX_PIPELINE_FRAMES and not CAP_STREAM_COPY else 0
+    )
     encode = (convert_frames + cap_n) * ENCODE_TO_POSE_COST
     pose = min(n, MAX_PIPELINE_FRAMES)
     prep_end = pose_band * encode / (encode + pose) if encode > 0 else 0.0
@@ -128,7 +137,10 @@ def _prepare_video(
         progress("Preparing video…", 0.0)
     cfr_path, _ = ensure_cfr(video_path, progress=_band(0.0, convert_end))
     proc_path, _ = cap_frames(
-        cfr_path, MAX_PIPELINE_FRAMES, progress=_band(convert_end, prep_end)
+        cfr_path,
+        MAX_PIPELINE_FRAMES,
+        progress=_band(convert_end, prep_end),
+        stream_copy=CAP_STREAM_COPY,
     )
     return proc_path, prep_end
 

@@ -313,6 +313,7 @@ def cap_frames(
     output_path: Optional[str] = None,
     crf: int = 18,
     progress: Optional[EncodeProgress] = None,
+    stream_copy: bool = False,
 ) -> Tuple[str, bool]:
     """Trim a video to at most ``max_frames`` frames (keeping the first ones).
 
@@ -335,6 +336,18 @@ def cap_frames(
         crf: x264 quality for the re-encode (default 18, near-lossless).
         progress: Optional callback(fraction) during the re-encode; not
             called when the clip is already short enough.
+        stream_copy: Copy compressed frames instead of re-encoding them
+            (``-c copy``): well under a second instead of seconds per hundred
+            4K frames, and the kept frames are the source's own pixels. The
+            copy keeps packets in decode order, where an anchor frame comes
+            before the B-frames displayed ahead of it, so the first
+            ``max_frames`` packets are not always the first ``max_frames``
+            frames: on an anchor-every-4th-frame stream they are frames
+            0-298 and 300, skipping 299. ``_copy_cut_length`` therefore
+            keeps the largest packet count, at most ``max_frames``, whose
+            frames are exactly the first ones (297 on that stream). If the
+            packet timestamps cannot be read, the clip is re-encoded as
+            before. ``crf`` is then unused.
 
     Returns:
         Tuple of (path_to_use, was_capped). If the clip already has
@@ -356,25 +369,75 @@ def cap_frames(
     if output_path is None:
         output_path = str(path.with_stem(path.stem + f"_cap{max_frames}"))
 
+    keep = max_frames
+    if stream_copy:
+        n_copy = _copy_cut_length(str(path), max_frames)
+        if n_copy is None:
+            stream_copy = False  # unreadable timestamps: re-encode instead
+        else:
+            keep = n_copy
+    codec = (
+        ["-c:v", "copy"]
+        if stream_copy
+        else ["-c:v", "libx264", "-preset", "fast", "-crf", str(crf)]
+    )
     cmd = [
         "ffmpeg",
         "-i",
         str(path),
         "-frames:v",
-        str(max_frames),
-        "-c:v",
-        "libx264",
-        "-preset",
-        "fast",
-        "-crf",
-        str(crf),
+        str(keep),
+        *codec,
         "-an",  # drop audio; metrics are video-only
         "-y",
         str(output_path),
     ]
-    _run_ffmpeg(cmd, max_frames, progress, "frame-cap")
+    _run_ffmpeg(cmd, keep, progress, "frame-cap")
 
     return str(output_path), True
+
+
+def _copy_cut_length(video_path: str, max_frames: int) -> Optional[int]:
+    """The largest ``n <= max_frames`` such that a stream copy of the first
+    ``n`` packets (decode order) holds exactly display frames ``0..n-1``.
+
+    Reads the first ``max_frames + 32`` video packets' presentation
+    timestamps, ranks them into display order, and keeps the longest prefix
+    of packets whose ranks are ``0..n-1``. The extra packets cover the
+    encoder's reordering, so every frame displayed before ``max_frames`` is
+    among those read.
+
+    Returns:
+        The packet count, or None when the timestamps cannot be read.
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-read_intervals",
+        f"%+#{max_frames + 32}",
+        "-show_entries",
+        "packet=pts",
+        "-of",
+        "csv=p=0",
+        video_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        pts = [int(line.strip().rstrip(",")) for line in result.stdout.split()]
+    except ValueError:
+        return None
+    if result.returncode != 0 or len(pts) < 2 or len(set(pts)) != len(pts):
+        return None
+    rank = {p: i for i, p in enumerate(sorted(pts))}
+    best, highest = None, -1
+    for n, p in enumerate(pts[:max_frames], start=1):
+        highest = max(highest, rank[p])
+        if highest == n - 1:
+            best = n
+    return best
 
 
 def _verify_cfr(video_path: str, expected_fps: int) -> None:

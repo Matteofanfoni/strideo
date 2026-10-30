@@ -1175,7 +1175,8 @@ def render_navbar(active: str = "") -> None:
 
     Every page calls this on every run, which makes it the one place that
     runs on each interaction anywhere in the app, so it also keeps the
-    visitor's upload folder alive and deletes idle ones
+    visitor's upload folder alive, deletes idle ones, and starts the
+    background sweeper that deletes them when nobody is visiting
     (``utils.session_files``; the privacy policy promises deletion within an
     hour of the last activity).
     """

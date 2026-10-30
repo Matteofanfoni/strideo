@@ -1,7 +1,8 @@
 """Container startup tasks — runs once when the Streamlit process starts.
 
 Imported at the top of app.py so it executes before any page is served:
-  1. Removes per-session upload dirs older than 4 hours (disk hygiene).
+  1. Removes per-session upload dirs a restart left behind, by the same
+     idle rule as ``utils.session_files`` (the privacy policy's hour).
   2. Downloads pose_landmarker_heavy.task if not present (MediaPipe needs
      this file on disk; it is not pip-installable or committed to the repo).
   3. Warms the RTMPose-x ONNX model so the first user upload does not stall
@@ -53,10 +54,10 @@ def _log_env_versions() -> None:
 def _clean_stale_sessions() -> None:
     """Remove idle per-session upload dirs at container start.
 
-    The same rule as every page run's sweep (``utils.session_files``): a
-    folder untouched for an hour is deleted. That per-run sweep is what keeps
-    the privacy policy true on a container that runs for weeks; this one only
-    clears what a restart left behind before the first visitor arrives.
+    The same rule as ``utils.session_files``' background sweeper, which the
+    first page run starts and which keeps the privacy policy's hour on a
+    container that runs for weeks, with or without traffic. This one
+    only clears what a restart left behind before the first visitor arrives.
     """
     from utils.session_files import sweep_idle_sessions
 
