@@ -12,7 +12,14 @@
 # Core pipeline
 numpy>=1.24.0
 scipy>=1.11.0
-opencv-python-headless>=4.8.0   # headless: no libGL/GUI deps on a server container
+opencv-python-headless==4.13.0.92  # headless: no libGL/GUI deps on a server container
+opencv-python==4.13.0.92        # PINNED with the two around it: rtmlib pulls
+opencv-contrib-python==4.13.0.92  # opencv-python and mediapipe pulls
+                                # opencv-contrib-python, all three install the
+                                # same `cv2`, and unpinned the image floated to
+                                # 5.0.0 (seen in the boot log 2026-10-31), a
+                                # major version nothing here was tested on.
+                                # 4.13.0.92 is the dev env's version.
 mediapipe==0.10.32              # BlazePose (33 landmarks) — PINNED to the
                                 # validated local version. HF previously
                                 # resolved 0.10.35, which coincided with a

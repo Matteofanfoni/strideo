@@ -199,6 +199,13 @@ BREAKER_COOLDOWN_S = 600.0
 #: which always reports back (a failure too); a guard, not a timing.
 EXTRACTION_WAIT_S = 600.0
 
+#: Frames RTMPose may have past BlazePose's last before the automatic engine
+#: refuses the pair. The Modal call sizes itself from the container's frame
+#: count, BlazePose from the frames it decodes; on the live Space a trimmed
+#: clip decoded one frame short of its count (300 against 299), and the
+#: engine was skipped although the two were aligned from frame 0.
+TRAILING_FRAME_SLACK = 2
+
 #: Upper bound on the engine thread's wait for the Modal warm-up to answer
 #: before it sends the clip. A cold start is ~12 s live; past this the clip
 #: is sent anyway, so a hung warm-up can only cost what it was meant to save.
@@ -280,8 +287,10 @@ class EngineJob:
         self.reason = reason
         self.status = status
         self._finished.set()
+        # WARNING, not INFO: the Space prints no INFO lines, and a skipped
+        # run's reason is otherwise invisible in its log.
         if reason:
-            logger.info("Automatic engine %s: %s", status, reason)
+            logger.warning("Automatic engine %s: %s", status, reason)
 
 
 def _run_engine_job(
@@ -328,7 +337,8 @@ def _run_engine_job(
             job._finish("skipped", reason="the fast path failed")
             return
         n_frames = len(extraction.selected_landmarks)
-        if len(rtm.keypoints) != n_frames:
+        extra = len(rtm.keypoints) - n_frames
+        if not 0 <= extra <= TRAILING_FRAME_SLACK:
             job._finish(
                 "skipped",
                 reason=f"RTMPose has {len(rtm.keypoints)} frames, "
@@ -336,8 +346,12 @@ def _run_engine_job(
             )
             return
 
+        # Both read the same file from its frame 0, so frames past
+        # BlazePose's last are a tail to drop, not a misalignment.
         window = rtmpose_window(extraction.selected_landmarks)
-        keypoints, scores = mask_to_window(rtm.keypoints, rtm.scores, window)
+        keypoints, scores = mask_to_window(
+            rtm.keypoints[:n_frames], rtm.scores[:n_frames], window
+        )
         analysis = run_clip_pipeline(
             proc_path,
             runner_height_cm=runner_height_cm,

@@ -33,6 +33,7 @@ from utils.elite_reference import (  # noqa: E402
 from pipeline_runner import engine_auto_enabled  # noqa: E402
 from utils.engine_results import (  # noqa: E402
     ENGINE_POLL_S,
+    ENGINE_TOO_SLOW_MESSAGE,
     absorb_engine_job,
     apply_full_analysis,
     engine_pending,
@@ -1940,6 +1941,12 @@ if results_with_metrics:
                     if m_fast is not None:
                         _render_metric_comparison_charts(m_fast, m, r["video_name"])
                 else:
+                    # Why the automatic run left the button here, when it did.
+                    _auto_job = r.get("engine_job")
+                    if r.get("engine_skip_message"):
+                        st.info(r["engine_skip_message"])
+                    elif _auto_job is not None and not _auto_job.finished:
+                        st.info(ENGINE_TOO_SLOW_MESSAGE)
                     if r.get("full_analysis_excluded"):
                         st.warning(
                             "The deterministic kinematics engine could not "
@@ -2768,8 +2775,10 @@ _EXPORT_EXCLUDE_KEYS = {
     # The fast path's BlazePoseExtraction (numpy arrays, a dataclass),
     # kept only so the in-depth run can skip a second BlazePose pass.
     "extraction_fast",
-    # The automatic engine run's EngineJob (a thread's state).
+    # The automatic engine run's EngineJob (a thread's state), and why it
+    # was skipped, which describes this visit only.
     "engine_job",
+    "engine_skip_message",
     "analysis",
     "metrics",
     "preprocessing",

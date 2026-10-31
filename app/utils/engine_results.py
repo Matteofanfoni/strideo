@@ -125,3 +125,36 @@ def absorb_engine_job(r: dict) -> None:
     r["engine_job"] = None
     if job.status in ("done", "excluded") and r.get("metrics_full") is None:
         apply_full_analysis(r, job.analysis)
+    elif job.status == "skipped":
+        r["engine_skip_message"] = engine_skip_message(job.reason)
+
+
+def engine_skip_message(reason) -> str:
+    """Why the automatic run did not produce a result, in a visitor's words.
+
+    ``reason`` is ``EngineJob.reason``, written for the log; this maps it to
+    one plain sentence for the Results page, shown above the button.
+    """
+    text = (reason or "").lower()
+    if text.startswith("modal") or "breaker" in text:
+        why = "the GPU service it runs on did not answer in time"
+    elif "frames" in text:
+        why = (
+            "its two pose models read this clip as different lengths, so it "
+            "was stopped as a precaution"
+        )
+    elif "fast path" in text or "extraction" in text:
+        why = "the first analysis did not finish, so it could not start"
+    else:
+        why = "it ran into an unexpected error"
+    return (
+        "The deterministic kinematics engine did not run automatically on "
+        f"this clip: {why}. You can run it yourself below."
+    )
+
+
+#: Shown when an automatic run is still going past ``ENGINE_PENDING_MAX_S``.
+ENGINE_TOO_SLOW_MESSAGE = (
+    "The deterministic kinematics engine is taking longer than usual on this "
+    "clip, so it is no longer being waited for. You can run it yourself below."
+)
