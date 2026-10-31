@@ -142,12 +142,17 @@ def _prepare_video(
     if progress is not None:
         progress("Preparing video…", 0.0)
     cfr_path, _ = ensure_cfr(video_path, progress=_band(0.0, convert_end))
+    # The locator reports no fraction of its own, so name it while it runs
+    # rather than leave the bar silent.
+    if progress is not None and LOCATE_RUNNER and n > MAX_PIPELINE_FRAMES:
+        progress("Locating the runner…", convert_end)
+    start = _runner_start(cfr_path)
     proc_path, _ = cap_frames(
         cfr_path,
         MAX_PIPELINE_FRAMES,
         progress=_band(convert_end, prep_end),
         stream_copy=CAP_STREAM_COPY,
-        start_frame=_runner_start(cfr_path),
+        start_frame=start,
     )
     return proc_path, prep_end
 

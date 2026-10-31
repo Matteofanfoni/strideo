@@ -201,18 +201,46 @@ def decode_every(
     ]
 
 
+#: Upper bound on YOLOX's onnxruntime threads: the live Space's vCPUs.
+MAX_DETECT_THREADS = 8
+
+
+def _detect_threads() -> int:
+    """CPUs this process may run on, capped at ``MAX_DETECT_THREADS``.
+
+    onnxruntime sizes its default thread pool from the host's cores, not the
+    process's: on 8 CPUs of a larger host its threads thrash, and YOLOX took
+    877 ms a frame against 120 ms with 8 threads (pinned on the Legion;
+    ~25 s per upload live). A container's CPU quota does not show in the
+    affinity mask, hence the cap as well.
+    """
+    import os
+
+    try:
+        n = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+    except AttributeError:
+        n = os.cpu_count() or 1
+    return max(1, min(n, MAX_DETECT_THREADS))
+
+
 def _person_detector():
     """YOLOX-m alone, the detector of RTMPose-x's ``Wholebody`` (same model
-    file, already cached in the app image), without loading RTMPose."""
+    file, already cached in the app image), without loading RTMPose, its
+    session rebuilt with an explicit thread count (``_detect_threads``)."""
+    import onnxruntime as ort
     from rtmlib import YOLOX, Wholebody
+    from rtmlib.tools.file import download_checkpoint
 
     mode = Wholebody.MODE["performance"]
-    return YOLOX(
-        mode["det"],
-        model_input_size=mode["det_input_size"],
-        backend="onnxruntime",
-        device="cpu",
+    path = download_checkpoint(mode["det"])
+    det = YOLOX(path, model_input_size=mode["det_input_size"], backend="onnxruntime")
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = _detect_threads()
+    opts.inter_op_num_threads = 1
+    det.session = ort.InferenceSession(
+        path, sess_options=opts, providers=["CPUExecutionProvider"]
     )
+    return det
 
 
 def locate_runner_window(
