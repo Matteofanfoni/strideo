@@ -314,8 +314,9 @@ def cap_frames(
     crf: int = 18,
     progress: Optional[EncodeProgress] = None,
     stream_copy: bool = False,
+    start_frame: int = 0,
 ) -> Tuple[str, bool]:
-    """Trim a video to at most ``max_frames`` frames (keeping the first ones).
+    """Trim a video to at most ``max_frames`` frames, from ``start_frame``.
 
     The web app's pipeline buffers full-resolution frames for the seeded pass
     (~25 MB/frame at 4K), so peak RAM scales linearly with frame count. This is
@@ -348,6 +349,11 @@ def cap_frames(
             frames are exactly the first ones (297 on that stream). If the
             packet timestamps cannot be read, the clip is re-encoded as
             before. ``crf`` is then unused.
+        start_frame: First frame to keep (default 0, the first frames). A
+            window that does not start at 0 is always re-encoded, frame-exact
+            through ffmpeg's ``trim`` filter, since a copy can only start on
+            a keyframe; ``stream_copy`` is then ignored. Clamped so the
+            window ends at the clip's last frame.
 
     Returns:
         Tuple of (path_to_use, was_capped). If the clip already has
@@ -370,6 +376,11 @@ def cap_frames(
         output_path = str(path.with_stem(path.stem + f"_cap{max_frames}"))
 
     keep = max_frames
+    start_frame = max(0, min(start_frame, n_frames - max_frames))
+    window = []
+    if start_frame > 0:
+        stream_copy = False
+        window = ["-vf", f"trim=start_frame={start_frame},setpts=PTS-STARTPTS"]
     if stream_copy:
         n_copy = _copy_cut_length(str(path), max_frames)
         if n_copy is None:
@@ -385,6 +396,7 @@ def cap_frames(
         "ffmpeg",
         "-i",
         str(path),
+        *window,
         "-frames:v",
         str(keep),
         *codec,

@@ -84,6 +84,12 @@ MAX_PIPELINE_FRAMES = 300
 #: except the last. Off until scored against the annotated clips.
 CAP_STREAM_COPY = False
 
+#: Place the capped window on the runner (YOLOX-m on every 15th frame,
+#: ``runner_locator.locate_runner_window``) instead of keeping the first
+#: frames, which cut a late crossing short. A clip whose runner
+#: is gone before frame 300 keeps the first frames either way.
+LOCATE_RUNNER = True
+
 # The shipped artifact. Not in git (see models/*.onnx in .gitignore) —
 # present on any machine that ran scripts/export_final_model_to_onnx.py.
 # F6 (deploy) is the item that gets this artifact onto the deployed target;
@@ -141,8 +147,25 @@ def _prepare_video(
         MAX_PIPELINE_FRAMES,
         progress=_band(convert_end, prep_end),
         stream_copy=CAP_STREAM_COPY,
+        start_frame=_runner_start(cfr_path),
     )
     return proc_path, prep_end
+
+
+def _runner_start(cfr_path: str) -> int:
+    """First frame of the capped window: on the runner when ``LOCATE_RUNNER``
+    and the clip is over the cap, else 0. A locator failure keeps 0, the
+    first frames, rather than failing the upload."""
+    n = frame_count(cfr_path)
+    if not LOCATE_RUNNER or n <= MAX_PIPELINE_FRAMES:
+        return 0
+    from src.preprocessing.runner_locator import locate_runner_window
+
+    try:
+        return locate_runner_window(cfr_path, n, MAX_PIPELINE_FRAMES).start
+    except Exception:
+        logger.warning("runner locator failed; keeping the first frames", exc_info=True)
+        return 0
 
 
 def engine_auto_enabled() -> bool:

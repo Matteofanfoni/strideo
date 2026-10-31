@@ -595,8 +595,9 @@ def _validate_clip(path: str):
         return False, f"Too short ({duration:.1f}s) - minimum is 1 second.", warns
     if n_frames > MAX_PIPELINE_FRAMES:
         warns.append(
-            f"{duration:.1f}s ({int(n_frames)} frames) - trimmed to the first "
-            f"{MAX_PIPELINE_FRAMES} frames (~{MAX_PIPELINE_FRAMES // 60}s @ 60fps)."
+            f"{duration:.1f}s ({int(n_frames)} frames) - trimmed to the "
+            f"{MAX_PIPELINE_FRAMES} frames (~{MAX_PIPELINE_FRAMES // 60}s @ 60fps) "
+            "around the runner."
         )
     # This read `0 < fps < 30`, so exactly 30 fps - the commonest
     # phone default - passed with no warning at all. The bar is now the

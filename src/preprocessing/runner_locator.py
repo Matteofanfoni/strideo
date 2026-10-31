@@ -7,12 +7,18 @@ found without the full pose pass the cap exists to bound; the frame-
 difference motion gate was measured unfit for that (camera motion dominates
 it).
 
-This decodes only the clip's keyframes (ffmpeg ``-skip_frame nokey``, about
-one a second on phone footage), downscaled, and runs BlazePose's image mode
-on each. The keyframes with a detection bracket the crossing, and the
-window is centred on them. Keyframes are also where a stream copy can
-start a cut exactly, so ``keyframe_start`` offers the window's start
-snapped back to one.
+``locate_runner_window`` is the one the app uses: every
+``LOCATE_EVERY``-th frame, decoded at ``DECODE_WIDTH``, goes to YOLOX-m,
+RTMPose's own person detector, and the window moves only when the frames
+with a person run past the cap. Measured on the 19 annotated clips over 300
+frames: all 162 ground-truth contacts kept, against 153 for the first 300
+frames, and no clip worse.
+
+``locate_runner`` is the first attempt, kept as its record with no caller:
+it decodes only the clip's keyframes and runs BlazePose's image
+mode on each, and was measured blind, since a 60 fps conversion carries a
+keyframe only every 250 frames and BlazePose cannot see a small side-on
+runner in a single frame.
 """
 
 from __future__ import annotations
@@ -27,6 +33,10 @@ import numpy as np
 #: Width keyframes are decoded at; BlazePose's detector works on a 224 px
 #: square crop, so 4K buys nothing for a yes/no person check.
 DECODE_WIDTH = 1280
+
+#: Frames between YOLOX samples. Every 30 kept as many GT contacts in the
+#: survey; 15 gives a briefly visible runner a few more chances to be seen.
+LOCATE_EVERY = 15
 
 
 @dataclass
@@ -159,6 +169,78 @@ def locate_runner(
     start = int(round(centre - length / 2.0))
     start = max(0, min(start, n_frames - length))
     return RunnerWindow(start, length, n_frames, keys, detected)
+
+
+def decode_every(
+    video_path: str, every: int, width: int = DECODE_WIDTH
+) -> List[np.ndarray]:
+    """Frames 0, ``every``, 2 * ``every``, ... as BGR arrays ``width`` wide."""
+    w, h = _video_size(video_path)
+    out_h = int(round(h * width / w / 2.0)) * 2
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-i",
+        video_path,
+        "-vf",
+        f"select='not(mod(n\\,{every}))',scale={width}:{out_h}",
+        "-fps_mode",
+        "passthrough",
+        "-pix_fmt",
+        "bgr24",
+        "-f",
+        "rawvideo",
+        "-",
+    ]
+    raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+    size = width * out_h * 3
+    return [
+        np.frombuffer(raw[i : i + size], dtype=np.uint8).reshape(out_h, width, 3)
+        for i in range(0, len(raw) - size + 1, size)
+    ]
+
+
+def _person_detector():
+    """YOLOX-m alone, the detector of RTMPose-x's ``Wholebody`` (same model
+    file, already cached in the app image), without loading RTMPose."""
+    from rtmlib import YOLOX, Wholebody
+
+    mode = Wholebody.MODE["performance"]
+    return YOLOX(
+        mode["det"],
+        model_input_size=mode["det_input_size"],
+        backend="onnxruntime",
+        device="cpu",
+    )
+
+
+def locate_runner_window(
+    video_path: str, n_frames: int, length: int, every: int = LOCATE_EVERY
+) -> RunnerWindow:
+    """Where to keep ``length`` frames so that they hold the runner.
+
+    The span runs from the first to the last sampled frame with a person,
+    widened by one sampling step each side. The window stays at frame 0 when
+    the span ends inside it, so a clip that fits today keeps today's frames;
+    otherwise it is centred on the span and clamped to the clip. No person
+    at all also keeps frame 0.
+    """
+    if n_frames <= length:
+        return RunnerWindow(0, n_frames, n_frames)
+    det = _person_detector()
+    detected = []
+    for i, frame in enumerate(decode_every(video_path, every)):
+        boxes = det(frame)
+        if boxes is not None and len(boxes):
+            detected.append(i * every)
+    if not detected or detected[-1] + every < length:
+        return RunnerWindow(0, length, n_frames, detected=detected)
+    lo = max(0, detected[0] - every)
+    hi = min(n_frames - 1, detected[-1] + every)
+    start = int(round((lo + hi) / 2.0 - length / 2.0))
+    start = max(0, min(start, n_frames - length))
+    return RunnerWindow(start, length, n_frames, detected=detected)
 
 
 def keyframe_start(window: RunnerWindow) -> int:
