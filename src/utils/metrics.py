@@ -29,9 +29,10 @@ def calculate_cadence(
     in, and read high: +1.88% cohort bias, +9.0% on ``S1_04_800m_2``.
     Intervals are only ever taken between contacts adjacent in ``contacts``,
     so dropping one removes its two intervals rather than merging them into a
-    double-length one. If that leaves fewer than two usable intervals, every
-    contact is used, as before. Of eleven GT-free rules compared on the S1
-    cohort, this one changed no clip for the worse.
+    double-length one. If that leaves fewer than two usable intervals,
+    same-leg strides with both ends kept are used (two or more needed);
+    failing that, every contact is used, as before. Of eleven GT-free rules
+    compared on the S1 cohort, this one changed no clip for the worse.
 
     Args:
         contacts: List of ground contact events
@@ -55,10 +56,53 @@ def calculate_cadence(
         cadence_spm, cadence_std, n = _cadence_from_contacts(contacts, fps, keep)
         if n >= 2:
             return cadence_spm, cadence_std
+        # Kept contacts that are never adjacent can still form same-leg
+        # strides. Without this, a clip whose rejected contacts alternate with
+        # its kept ones (one leg mistimed) reached the all-contacts fallback,
+        # whose 1.5x-median window kept only the short half of a 15/25-frame
+        # sequence: 240 spm against a true 175.6.
+        cadence_spm, cadence_std, n = _cadence_from_same_leg_strides(
+            contacts, fps, keep
+        )
+        if n >= 2:
+            return cadence_spm, cadence_std
     cadence_spm, cadence_std, _ = _cadence_from_contacts(
         contacts, fps, [True] * len(contacts)
     )
     return cadence_spm, cadence_std
+
+
+def _cadence_from_same_leg_strides(
+    contacts: List[GroundContact], fps: float, keep: List[bool]
+) -> Tuple[float, float, int]:
+    """Cadence from same-leg strides whose two ends are both kept.
+
+    A stride pairs each contact with the next contact of the same leg in
+    ``contacts``, so a rejected contact between two kept ones is never
+    bridged into a double-length stride. One stride is two steps.
+
+    Returns ``(cadence_spm, cadence_std, n_strides_used)``.
+    """
+    by_leg: Dict[str, List[Tuple[float, bool]]] = {}
+    for c, k in zip(contacts, keep):
+        t = c.contact_frame if c.contact_frame is not None else float(c.frame)
+        by_leg.setdefault(c.leg, []).append((t, k))
+    strides_frames = np.array(
+        [
+            b[0] - a[0]
+            for seq in by_leg.values()
+            for a, b in zip(seq, seq[1:])
+            if a[1] and b[1]
+        ]
+    )
+    if len(strides_frames) == 0:
+        return np.nan, np.nan, 0
+    steps_per_second = 2.0 * fps / strides_frames
+    return (
+        float(np.mean(steps_per_second) * 60),
+        float(np.std(steps_per_second) * 60),
+        len(strides_frames),
+    )
 
 
 def _cadence_from_contacts(
