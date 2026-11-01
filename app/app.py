@@ -775,8 +775,11 @@ pipeline-fitted correction on the remaining clips.</p>
 a full external validation. On ground contact time the deterministic
 kinematics engine's figure is the lower of the two, but the two numbers are
 not earned the same way: this one is held out runner by runner, while the
-engine's constants were fitted on the very clips it is scored on. More
-runners is the clearest lever, for both.</p>
+engine's constants were fitted on the very clips it is scored on. Both
+figures are measured against hand annotation of the same 60&nbsp;fps video,
+which resolves to one frame (16.7&nbsp;ms), so they describe how well a
+clip's average agrees, not the timing of a single footstrike. More runners
+is the clearest lever, for both.</p>
 """,
         unsafe_allow_html=True,
     )

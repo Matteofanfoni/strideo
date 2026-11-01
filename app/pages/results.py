@@ -1825,8 +1825,12 @@ if results_with_metrics:
             "no figure comes from a runner the model had already seen. The "
             "deterministic kinematics engine's own figure is lower "
             "(3.99±3.60 ms), though not earned the same way: its constants "
-            "were fitted on the same clips it is scored on. Cadence and "
-            "vertical oscillation come from the same network."
+            "were fitted on the same clips it is scored on. Both are "
+            "measured against hand annotation of the same 60 fps video, "
+            "which resolves to one frame (16.7 ms): they show how well a "
+            "clip's average agrees, not the timing of any single footstrike "
+            "or the difference between two steps. Cadence and vertical "
+            "oscillation come from the same network."
             + (
                 ""
                 if has_full

@@ -104,6 +104,9 @@ Both clear the target, though the two figures rest on different footing:
   scored on fewer contacts than they contain, and the contacts that go missing
   are the hard ones.
 - StrideoNet's figure is held out runner by runner. The engine's is not.
+- Both are measured against hand annotation of the same 60 fps video, which
+  resolves to one frame (16.7 ms). They show how well a clip's average agrees,
+  not the timing of a single footstrike.
 
 **Cadence** comes out clean: a scored-set residual of +0.1%, with all 45 clips
 inside ±2%. That is the set matched to the annotation. The raw average the
