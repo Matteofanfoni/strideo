@@ -27,6 +27,10 @@ from src.utils.pace_predictor import (  # noqa: E402
 )
 from pipeline_runner import MAX_PIPELINE_FRAMES  # noqa: E402
 from utils.session_files import session_dir  # noqa: E402
+from utils.usage_count import (  # noqa: E402
+    SESSION_KEY as USAGE_SESSION_KEY,
+    record_completed_analysis,
+)
 
 st.set_page_config(
     page_title="Upload | strideo.it",
@@ -989,6 +993,8 @@ if analyze_clicked and num_uploaded > 0:
                 "success": metrics_dict is not None,
             }
             all_results.append(result_entry)
+            if metrics_dict is not None:
+                record_completed_analysis(st.session_state.get(USAGE_SESSION_KEY))
 
         # Final summary
         st.markdown("---")

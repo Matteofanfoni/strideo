@@ -1057,7 +1057,15 @@ _PROGRESS_CSS = """
 
 
 def inject_shared_styles() -> None:
-    """Inject the base CSS shared by all pages."""
+    """Inject the base CSS shared by all pages.
+
+    Also remembers the landing page's campaign tag: every page calls this
+    first, and a visitor can land on any of them (strideo.org forwards the
+    path), so this is the one place that sees each landing.
+    """
+    from utils.usage_count import remember_campaign_tag
+
+    remember_campaign_tag()
     css = (
         _BASE_CSS
         + _TYPE_CSS
