@@ -10,6 +10,7 @@ without executing the page script.
 import time
 from dataclasses import asdict
 
+from src.utils.plausibility import is_implausible
 from src.utils.vo_correction import correct_engine_metrics_for_display
 
 
@@ -85,6 +86,12 @@ def apply_full_analysis(r: dict, full_analysis) -> bool:
         detect_running_direction(full_analysis.selected_landmarks),
     )
     r["strike_pattern_full"] = full_analysis.clip_strike_pattern
+    # Shown with a warning rather than withheld: the numbers stay visible,
+    # the visitor is told they disagree with the measured speed. A plain
+    # bool, so it survives "Save results" (src/utils/plausibility.py).
+    r["engine_implausible"] = is_implausible(
+        r["metrics_full"].get("velocity_ms"), full_analysis.velocity_ms_estimated
+    )
     r["analysis_full"] = full_analysis
     return True
 

@@ -1859,6 +1859,14 @@ if results_with_metrics:
             + " (a plain difference, not a verdict on which is right)</p>",
             unsafe_allow_html=True,
         )
+    if has_full and r.get("engine_implausible"):
+        st.warning(
+            "The deterministic kinematics engine's cadence and stride on this "
+            "clip imply a running speed well away from the speed measured "
+            "directly from the runner's movement across the frame, so at "
+            "least one of its numbers is likely wrong here. Its results are "
+            "still shown, but treat them with caution."
+        )
 
     # ── Deterministic kinematics engine (replaces the old "Second
     # Check" framing, and carries a Contact Tracker table of per-
