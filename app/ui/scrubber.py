@@ -49,14 +49,18 @@ def _load_frames(
     skip_rate: int,
     max_h: int,
     cache_token: str,
+    start_frame: int = 0,
+    n_frames: Optional[int] = None,
     _progress: Optional[Callable[[float], None]] = None,
 ) -> List[np.ndarray]:
     """Decode the clip once into display-resized BGR frames (cached by path).
 
     ``cache_token`` (mtime+size) invalidates the cache if the same path is
     reused for different content within a session. Frame ``t`` of the returned
-    list aligns with pose frame ``t`` because we keep every ``skip_rate``-th
-    source frame, matching the pipeline's sampling.
+    list aligns with pose frame ``t`` because we start at the pipeline's
+    ``start_frame`` and keep every ``skip_rate``-th source frame, matching its
+    sampling. ``n_frames`` stops the decode once the pose frames are covered,
+    since the clip may be an uncut upload far longer than the analysed window.
 
     ``_progress`` (0-1 per decoded frame) exists because this decode, not the
     encode loop after it, is the bulk of the annotated-video step: measured
@@ -68,10 +72,14 @@ def _load_frames(
     frames: List[np.ndarray] = []
     if not cap.isOpened():
         return frames
-    expected = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    expected = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - start_frame
     expected = (expected + skip_rate - 1) // skip_rate if expected > 0 else 0
+    if n_frames is not None:
+        expected = min(expected, n_frames)
+    if start_frame > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     idx = 0
-    while True:
+    while n_frames is None or len(frames) < n_frames:
         ok, frame = cap.read()
         if not ok:
             break
@@ -104,6 +112,7 @@ def _encode_annotated_video(
     _analysis,
     hud_lines: Optional[Tuple[str, ...]] = None,
     hud_font_scale: float = 1.0,
+    start_frame: int = 0,
     _progress: Optional[Callable[[float], None]] = None,
 ) -> bytes:
     """Bake overlays into an H.264 MP4 and return its bytes (cached per config).
@@ -121,6 +130,7 @@ def _encode_annotated_video(
     the caller's progress bar keeps moving through the encode; it is
     underscore-prefixed so ``st.cache_data`` leaves it out of the cache key
     (a cache hit skips the loop, and therefore the callback, entirely).
+    ``start_frame`` is the pipeline's first source frame (the overlay's).
     """
     # Decode is ~70% of this function's wall-clock, the draw+pipe loop the
     # rest, so the caller's fraction is split in that proportion rather than
@@ -131,6 +141,8 @@ def _encode_annotated_video(
         skip_rate,
         VIDEO_MAX_H,
         cache_token,
+        start_frame=start_frame,
+        n_frames=int(len(_analysis.selected_landmarks)),
         _progress=(
             None
             if _progress is None
@@ -262,8 +274,8 @@ def encode_strideonet_video(
 
     Args:
         overlay: the ``overlay`` dict from ``pipeline_runner.run_fast_path``
-            (cfr_path/fps/skip_rate/frame_width/selected_landmarks/
-            selected_visibilities).
+            (cfr_path/fps/skip_rate/start_frame/frame_width/
+            selected_landmarks/selected_visibilities).
         metrics: the fast-path ``metrics`` dict, for the burned-in HUD text.
         preprocessing: the fast-path ``preprocessing`` dict, for detection
             rate. Optional - HUD drops that one line if not given (e.g. a
@@ -309,5 +321,8 @@ def encode_strideonet_video(
         _analysis,
         tuple(hud_lines),
         0.72,  # hud_font_scale - ~2x the line count of the original 5-line HUD
+        # Absent from a result saved while long clips were still re-encoded
+        # into a clip of their own, which started at 0.
+        start_frame=int(overlay.get("start_frame", 0)),
         _progress=progress,
     )

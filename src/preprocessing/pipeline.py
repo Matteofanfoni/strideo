@@ -188,6 +188,9 @@ class ClipAnalysis:
     # of ``cfr_path``. Lets overlay viewers (the app scrubber) align frames to
     # landmarks without re-deriving it. 1 when the CFR is already at target fps.
     skip_rate: int = 1
+    # First source frame read: pose frame ``t`` is source frame
+    # ``start_frame + t * skip_rate`` (see ``BlazePoseExtraction``).
+    start_frame: int = 0
 
 
 def _buffer_video_frames(video_path: str, skip_rate: int) -> List[np.ndarray]:
@@ -238,6 +241,12 @@ class BlazePoseExtraction:
     # stream, same fallback ladder as the bootstrap calibration.
     estimated_velocity_ms: Optional[float]
     leg_length_m: Optional[float]
+    # Source frames of ``cfr_path`` the passes read: pose frame ``t`` is
+    # source frame ``start_frame + t * skip_rate``. The app reads its
+    # 300-frame window from the uncut file this way; 0/None is the whole
+    # clip.
+    start_frame: int = 0
+    end_frame: Optional[int] = None
 
 
 def extract_blazepose_landmarks_and_calibration(
@@ -267,6 +276,8 @@ def extract_blazepose_landmarks_and_calibration(
     pose_model_path: Optional[Path] = None,
     progress: Optional[ProgressCallback] = None,
     concurrent_passes: bool = False,
+    start_frame: int = 0,
+    end_frame: Optional[int] = None,
 ) -> BlazePoseExtraction:
     """Run the BlazePose-only prefix of the v1.20 pipeline: VFR->CFR through
     gap-fill, pose-quality metrics, the final spatial calibration, and
@@ -291,11 +302,18 @@ def extract_blazepose_landmarks_and_calibration(
             landmarks are bit-identical to the serial passes on every clip
             measured.
             Off by default; the app turns it on.
+        start_frame / end_frame: Source frames of the CFR clip both passes
+            read (``end_frame`` inclusive, None = to the end), reached by
+            seek, which was measured frame-exact on all 19 annotated clips
+            over 300 frames. Not supported with ``seeded_pass``,
+            which buffers the whole clip.
 
     Returns:
         BlazePoseExtraction with everything a BlazePose-only or a
         RTMPose-augmented caller needs to continue.
     """
+    if seeded_pass and (start_frame or end_frame is not None):
+        raise ValueError("the seeded pass reads the whole clip, not a frame range")
     from src.preprocessing.pose_estimator import (
         MODEL_HEAVY,
         LandmarkIndex,
@@ -356,6 +374,8 @@ def extract_blazepose_landmarks_and_calibration(
             min_pose_detection_confidence=0.5,
             model_path=resolved_model_path,
             frame_progress=frame_progress,
+            start_frame=start_frame,
+            end_frame=end_frame,
         )
 
     pose_result_rev = None
@@ -387,6 +407,8 @@ def extract_blazepose_landmarks_and_calibration(
                 cfr_path,
                 model_path=resolved_model_path,
                 frame_progress=_rev_frac,
+                start_frame=start_frame,
+                end_frame=end_frame,
             )
             pose_result, video_meta = _forward(_fwd_frac)
             while True:
@@ -408,6 +430,8 @@ def extract_blazepose_landmarks_and_calibration(
                 cfr_path,
                 model_path=resolved_model_path,
                 frame_progress=_band("Pose estimation (reverse)", 0.45, 0.88),
+                start_frame=start_frame,
+                end_frame=end_frame,
             )
     fps = video_meta["effective_fps"]
     res_h = video_meta["height"]
@@ -648,6 +672,8 @@ def extract_blazepose_landmarks_and_calibration(
         calibration=calibration,
         estimated_velocity_ms=estimated_velocity_ms,
         leg_length_m=leg_length_m_for_prune,
+        start_frame=start_frame,
+        end_frame=end_frame,
     )
 
 
@@ -888,4 +914,5 @@ def run_clip_pipeline(
         selected_visibilities=selected_visibilities,
         frame_width=int(res_w),
         skip_rate=int(skip_rate),
+        start_frame=int(extraction.start_frame),
     )

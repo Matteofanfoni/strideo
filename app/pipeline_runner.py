@@ -26,7 +26,6 @@ from typing import Any, Optional, Tuple
 import numpy as np
 
 from src.preprocessing.frame_rate import (
-    cap_frames,
     converted_frame_count,
     ensure_cfr,
     frame_count,
@@ -78,12 +77,6 @@ def modal_bands(reused_extraction: bool) -> Tuple[float, float, float]:
 # carrying its own copy.
 MAX_PIPELINE_FRAMES = 300
 
-#: Cut the capped clip by stream copy (``cap_frames(stream_copy=True)``)
-#: instead of re-encoding it: ~0.06 s instead of ~5 s locally, ~15 s live,
-#: and the kept frames are the upload's own pixels, as the CLI sees them,
-#: except the last. Off until scored against the annotated clips.
-CAP_STREAM_COPY = False
-
 #: Place the capped window on the runner (YOLOX-m on every 15th frame,
 #: ``runner_locator.locate_runner_window``) instead of keeping the first
 #: frames, which cut a late crossing short. A clip whose runner
@@ -98,7 +91,7 @@ DEFAULT_ONNX_PATH = Path(__file__).parent.parent / "models" / "strideo_final.onn
 
 
 # Seconds to re-encode one 4K frame over seconds for BlazePose to process
-# one, on the live CPU Space: ~15 s to cap a clip to 300 frames against ~19 s
+# one, on the live CPU Space: ~15 s to re-encode 300 frames against ~19 s
 # of the two BlazePose passes, run concurrently, on those 300 (one fast-path
 # run, 2026-10-18: 22 s of passes plus annotation, ~3 s of it annotation).
 # Sizes the "Preparing video" band against the pose band that follows it.
@@ -108,53 +101,56 @@ ENCODE_TO_POSE_COST = 15.0 / 19.0
 def _prepare_video(
     video_path: str, progress: Optional[ProgressCallback], pose_band: float
 ) -> Tuple[str, float]:
-    """Convert to 60 fps CFR and cap to ``MAX_PIPELINE_FRAMES``, filling the
-    bar from 0 as each ffmpeg encode proceeds.
+    """Convert to 60 fps CFR, filling the bar from 0 as the ffmpeg encode
+    proceeds. Long clips are not cut here: ``_clip_range`` picks the frames
+    every consumer then reads from this file.
 
-    Either encode can be skipped (an already-CFR clip, a short one), so the
-    band is sized per clip before encoding starts: the frames each encode
-    will write, weighted by ``ENCODE_TO_POSE_COST``, against the frames
-    BlazePose will then process, inside the first ``pose_band`` of the bar.
-    A short CFR clip gets no band at all.
+    The band is sized per clip before encoding starts: the frames the
+    encode will write, weighted by ``ENCODE_TO_POSE_COST``, against the
+    frames BlazePose will then process, inside the first ``pose_band`` of
+    the bar. An already-CFR clip gets no band at all.
 
     Returns:
-        (path of the prepared clip, fraction of the bar preparation used).
+        (path of the CFR clip, fraction of the bar preparation used).
     """
     convert = needs_cfr_conversion(video_path)
-    n = converted_frame_count(video_path) if convert else frame_count(video_path)
-    convert_frames = n if convert else 0
-    # A stream-copy cut takes no measurable time, so it gets no band.
-    cap_n = (
-        MAX_PIPELINE_FRAMES if n > MAX_PIPELINE_FRAMES and not CAP_STREAM_COPY else 0
-    )
-    encode = (convert_frames + cap_n) * ENCODE_TO_POSE_COST
-    pose = min(n, MAX_PIPELINE_FRAMES)
-    prep_end = pose_band * encode / (encode + pose) if encode > 0 else 0.0
-    convert_end = (
-        prep_end * convert_frames / (convert_frames + cap_n) if encode > 0 else 0.0
-    )
+    prep_end = 0.0
+    if convert:
+        n = converted_frame_count(video_path)
+        encode = n * ENCODE_TO_POSE_COST
+        pose = min(n, MAX_PIPELINE_FRAMES)
+        prep_end = pose_band * encode / (encode + pose) if encode > 0 else 0.0
 
-    def _band(lo: float, hi: float):
-        if progress is None:
-            return None
-        return lambda f: progress("Preparing video…", lo + f * (hi - lo))
-
+    band = None
     if progress is not None:
         progress("Preparing video…", 0.0)
-    cfr_path, _ = ensure_cfr(video_path, progress=_band(0.0, convert_end))
+        band = lambda f: progress("Preparing video…", f * prep_end)  # noqa: E731
+    cfr_path, _ = ensure_cfr(video_path, progress=band if convert else None)
+    return cfr_path, prep_end
+
+
+def _clip_range(
+    cfr_path: str, progress: Optional[ProgressCallback], at: float
+) -> Tuple[int, Optional[int]]:
+    """The source frames of ``cfr_path`` every consumer analyses, as
+    ``(start_frame, end_frame)`` with ``end_frame`` inclusive: the whole clip
+    (``(0, None)``) within ``MAX_PIPELINE_FRAMES``, else that many frames from
+    ``_runner_start``.
+
+    The window is read from the uncut file by seek rather than re-encoded
+    into a 300-frame clip: a re-encode's pixels depend on the machine
+    that made it, and on one clip moved the engine's cadence by 64 spm. The
+    seek was measured frame-exact on all 19 annotated clips over the cap.
+    """
+    n = frame_count(cfr_path)
+    if n <= MAX_PIPELINE_FRAMES:
+        return 0, None
     # The locator reports no fraction of its own, so name it while it runs
     # rather than leave the bar silent.
-    if progress is not None and LOCATE_RUNNER and n > MAX_PIPELINE_FRAMES:
-        progress("Locating the runner…", convert_end)
-    start = _runner_start(cfr_path)
-    proc_path, _ = cap_frames(
-        cfr_path,
-        MAX_PIPELINE_FRAMES,
-        progress=_band(convert_end, prep_end),
-        stream_copy=CAP_STREAM_COPY,
-        start_frame=start,
-    )
-    return proc_path, prep_end
+    if progress is not None and LOCATE_RUNNER:
+        progress("Locating the runner…", at)
+    start = max(0, min(_runner_start(cfr_path), n - MAX_PIPELINE_FRAMES))
+    return start, start + MAX_PIPELINE_FRAMES - 1
 
 
 def _runner_start(cfr_path: str) -> int:
@@ -300,9 +296,10 @@ def _run_engine_job(
     shoe_type: Optional[str],
     shoe_sole_cm: float,
     warm: Optional[threading.Event] = None,
+    frames: Tuple[int, Optional[int]] = (0, None),
 ) -> None:
-    """Thread body: RTMPose on Modal over the whole capped clip, then, once
-    BlazePose is in, ``v1.35``'s presence window applied afterwards with
+    """Thread body: RTMPose on Modal over the clip's analysed frames, then,
+    once BlazePose is in, ``v1.35``'s presence window applied afterwards with
     ``mask_to_window`` (bit-identical inside the window to a windowed run,
     measured on every annotated clip) and the engine. Never falls back to a CPU RTMPose run.
 
@@ -310,9 +307,16 @@ def _run_engine_job(
     started: the clip is sent only once that container has answered (or
     ``WARM_WAIT_S`` passes), so the call lands on it rather than starting a
     second one.
+
+    ``frames`` is ``_clip_range``'s ``(start_frame, end_frame)``, the same
+    source frames BlazePose reads.
     """
     from src.preprocessing.pipeline import run_clip_pipeline
-    from src.preprocessing.rtmpose_extractor import mask_to_window, rtmpose_window
+    from src.preprocessing.rtmpose_extractor import (
+        RTMPoseResult,
+        mask_to_window,
+        rtmpose_window,
+    )
     from src.preprocessing.rtmpose_remote import (
         RemoteRTMPoseError,
         extract_rtmpose_remote_parallel,
@@ -321,8 +325,24 @@ def _run_engine_job(
     try:
         if warm is not None:
             warm.wait(WARM_WAIT_S)
+        start, end = frames
         try:
-            rtm, _ = extract_rtmpose_remote_parallel(proc_path, None, None, 1)
+            if end is None:
+                rtm, _ = extract_rtmpose_remote_parallel(proc_path, None, None, 1)
+            else:
+                # Source frames start..end of the uncut file. The result is
+                # file-length up to ``end``, zeros before ``start``, so the
+                # leading part is cut off and frame 0 is ``start``, as for
+                # BlazePose. A skip rate of 1 holds because the file is 60 fps
+                # CFR by now.
+                rtm, _ = extract_rtmpose_remote_parallel(
+                    proc_path, end + 1, (start, end), 1
+                )
+                rtm = RTMPoseResult(
+                    keypoints=rtm.keypoints[start:],
+                    scores=rtm.scores[start:],
+                    fps=rtm.fps,
+                )
         except RemoteRTMPoseError as exc:
             _BREAKER.record(False)
             job._finish("skipped", reason=f"Modal: {exc}")
@@ -346,7 +366,7 @@ def _run_engine_job(
             )
             return
 
-        # Both read the same file from its frame 0, so frames past
+        # Both read the same file from the same first frame, so frames past
         # BlazePose's last are a tail to drop, not a misalignment.
         window = rtmpose_window(extraction.selected_landmarks)
         keypoints, scores = mask_to_window(
@@ -378,9 +398,10 @@ def start_engine_job(
     shoe_type: Optional[str],
     shoe_sole_cm: float,
     warm: Optional[threading.Event] = None,
+    frames: Tuple[int, Optional[int]] = (0, None),
 ) -> EngineJob:
     """Start the automatic engine for a prepared clip and return its job,
-    already ``"skipped"`` when the breaker is open. ``warm``: see
+    already ``"skipped"`` when the breaker is open. ``warm``, ``frames``: see
     ``_run_engine_job``."""
     job = EngineJob()
     if not _BREAKER.allow():
@@ -388,7 +409,7 @@ def start_engine_job(
         return job
     threading.Thread(
         target=_run_engine_job,
-        args=(job, proc_path, runner_height_cm, shoe_type, shoe_sole_cm, warm),
+        args=(job, proc_path, runner_height_cm, shoe_type, shoe_sole_cm, warm, frames),
         daemon=True,
     ).start()
     return job
@@ -471,7 +492,7 @@ def run_fast_path(
     Returns:
         {"metrics": dict (BiomechanicalMetrics fields), "preprocessing":
          dict (same diagnostics shape upload.py has always built), "overlay":
-         dict (cfr_path/fps/skip_rate/frame_width/selected_landmarks/
+         dict (cfr_path/fps/skip_rate/start_frame/frame_width/selected_landmarks/
          selected_visibilities - everything results.py's annotated-video
          button needs to redraw the skeleton + metrics HUD later,
          without re-running extraction), "extraction": the
@@ -498,10 +519,16 @@ def run_fast_path(
     # preparation takes the front of extraction's share and extraction is
     # squeezed into what is left of it.
     proc_path, prep_end = _prepare_video(video_path, progress, 0.90)
+    start, end = _clip_range(proc_path, progress, prep_end)
 
     engine_job = (
         start_engine_job(
-            proc_path, runner_height_cm, shoe_type, shoe_sole_cm, warm=warm
+            proc_path,
+            runner_height_cm,
+            shoe_type,
+            shoe_sole_cm,
+            warm=warm,
+            frames=(start, end),
         )
         if engine_auto
         else None
@@ -524,6 +551,8 @@ def run_fast_path(
             pose_model_path=pose_model_path,
             progress=_extract_progress,
             concurrent_passes=True,
+            start_frame=start,
+            end_frame=end,
         )
     finally:
         if engine_job is not None:
@@ -607,6 +636,7 @@ def run_fast_path(
         "cfr_path": extraction.cfr_path,
         "fps": extraction.fps,
         "skip_rate": extraction.skip_rate,
+        "start_frame": extraction.start_frame,
         "frame_width": extraction.res_w,
         "selected_landmarks": extraction.selected_landmarks,
         "selected_visibilities": extraction.selected_visibilities,
@@ -661,10 +691,12 @@ def run_full_analysis(
 
     if extraction is not None:
         proc_path = extraction.cfr_path
+        start, end = extraction.start_frame, extraction.end_frame
     else:
         # BlazePose's band starts at 0.02, so preparation fills the bar to
         # there at most; RTMPose dwarfs it on this path.
-        proc_path, _ = _prepare_video(video_path, progress, 0.02)
+        proc_path, prep_end = _prepare_video(video_path, progress, 0.02)
+        start, end = _clip_range(proc_path, progress, prep_end)
 
     # RTMPose goes to the Modal GPU when enabled, else, or when that
     # fails, runs here on CPU. The local model is only built when needed:
@@ -728,8 +760,19 @@ def run_full_analysis(
             shoe_type=shoe_type,
             progress=_blaze_progress,
             concurrent_passes=True,
+            start_frame=start,
+            end_frame=end,
         )
     window = rtmpose_window(extraction.selected_landmarks)
+    n_frames = len(extraction.selected_landmarks)
+    # RTMPose reads the file's own frame numbers, so a window read from
+    # ``start`` asks for those frames and cuts the leading part off the
+    # result afterwards. A skip rate of 1 holds because the file is 60 fps
+    # CFR by now.
+    rtm_n, rtm_window = n_frames, window
+    if start:
+        lo, hi = window if window is not None else (0, n_frames - 1)
+        rtm_n, rtm_window = start + n_frames, (start + lo, start + hi)
 
     # RTMPose's frames run from ``bar["start"]`` to ``rtm_stop``. A fallback
     # restarts them from wherever the Modal attempt left the bar, so the bar
@@ -750,7 +793,6 @@ def run_full_analysis(
             bar["pos"] = bar["start"] + frac * (rtm_stop - bar["start"])
             _p(f"RTMPose pose estimation… frame {done}/{total}", bar["pos"])
 
-    n_frames = len(extraction.selected_landmarks)
     rtm = None
     if remote:
         if progress is not None:
@@ -758,8 +800,8 @@ def run_full_analysis(
         try:
             rtm, _ = extract_rtmpose_remote_parallel(
                 proc_path,
-                n_frames,
-                window,
+                rtm_n,
+                rtm_window,
                 extraction.skip_rate,
                 progress=_rtm_progress,
                 on_wait=_wait_progress,
@@ -776,13 +818,14 @@ def run_full_analysis(
             bar["start"] = bar["pos"]
         rtm = extract_rtmpose_landmarks_windowed(
             proc_path,
-            n_frames,
-            window,
+            rtm_n,
+            rtm_window,
             extraction.skip_rate,
             device=device,
             progress=_rtm_progress,
             model=rtm_model,
         )
+    rtm_landmarks, rtm_scores = rtm.keypoints[start:], rtm.scores[start:]
 
     def _pipe_progress(stage, frac, _p=progress):
         if _p is not None:
@@ -793,8 +836,8 @@ def run_full_analysis(
         runner_height_cm=runner_height_cm,
         shoe_type=shoe_type,
         shoe_sole_cm=shoe_sole_cm,
-        rtm_landmarks=rtm.keypoints,
-        rtm_scores=rtm.scores,
+        rtm_landmarks=rtm_landmarks,
+        rtm_scores=rtm_scores,
         progress=_pipe_progress,
         extraction=extraction,
         rtm_window=window,
