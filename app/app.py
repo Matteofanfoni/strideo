@@ -825,9 +825,10 @@ st.markdown(
   <p class="prose"><strong>StrideoNet</strong>, a FiLM pace-conditioned 2D
   CNN trained on a 5-runner dataset, now produces the app's default result.
   It reaches ground contact time within Strideo's own ≤10ms accuracy target
-  without a second pose model (cutting per-clip processing time by about
-  6x), without classifying strike pattern, and without detecting
-  individual footstrikes. It also has the most room left to improve: more
+  from a single pose model running on an ordinary CPU, without classifying
+  strike pattern, and without detecting individual footstrikes. The
+  deterministic kinematics engine adds a second, heavier pose model
+  (RTMPose), which runs on a rented GPU. StrideoNet also has the most room left to improve: more
   runners is the clearest lever on its remaining cadence and stride
   accuracy, which is why a second data-collection round is next.</p>
   <p class="prose">Strideo is built specifically for <strong>800 m and
