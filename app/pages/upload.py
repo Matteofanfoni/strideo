@@ -30,6 +30,7 @@ from utils.session_files import session_dir  # noqa: E402
 from utils.usage_count import (  # noqa: E402
     SESSION_KEY as USAGE_SESSION_KEY,
     record_completed_analysis,
+    record_source_rate,
 )
 
 st.set_page_config(
@@ -993,6 +994,10 @@ if analyze_clicked and num_uploaded > 0:
                 "success": metrics_dict is not None,
             }
             all_results.append(result_entry)
+            # Every analysed clip, completed or not: a 30 fps or VFR upload
+            # that fails is exactly what the frame-rate record needs to see.
+            # Off by default.
+            record_source_rate(video_path)
             if metrics_dict is not None:
                 record_completed_analysis(st.session_state.get(USAGE_SESSION_KEY))
 
