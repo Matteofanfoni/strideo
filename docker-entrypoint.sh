@@ -46,4 +46,11 @@ if [ -n "$NVIDIA_LIB_DIRS" ]; then
     export LD_LIBRARY_PATH="${NVIDIA_LIB_DIRS}:${LD_LIBRARY_PATH:-}"
 fi
 
+# Microsoft Clarity analytics: only when the Space variable is set. Written into
+# Streamlit's own index.html, since a snippet anywhere else lands in an
+# iframe Clarity cannot record. A failure logs and the app still starts.
+if [ -n "${CLARITY_PROJECT_ID:-}" ]; then
+    python app/utils/clarity.py "$CLARITY_PROJECT_ID" || echo "clarity: injection failed, app starts without it"
+fi
+
 exec streamlit run app/app.py --server.port=7860 --server.address=0.0.0.0

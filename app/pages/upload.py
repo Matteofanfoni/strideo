@@ -27,6 +27,7 @@ from src.utils.pace_predictor import (  # noqa: E402
 )
 from pipeline_runner import MAX_PIPELINE_FRAMES  # noqa: E402
 from utils.session_files import session_dir  # noqa: E402
+from utils.clarity import clarity_event  # noqa: E402
 from utils.usage_count import (  # noqa: E402
     SESSION_KEY as USAGE_SESSION_KEY,
     record_completed_analysis,
@@ -638,6 +639,10 @@ with st.container():
         key="clip_uploader",
         label_visibility="collapsed",
     )
+    # Analytics funnel step 1: once per session, the first time a clip is added.
+    if uploaded_files and not st.session_state.get("clarity_upload_started"):
+        st.session_state["clarity_upload_started"] = True
+        clarity_event("upload_started")
 
     st.markdown(
         '<p class="up-note muted" style="margin-bottom:24px !important;">'
@@ -824,6 +829,7 @@ if analyze_clicked and num_uploaded > 0:
     # Written into the slot reserved above so the footer, already rendered,
     # stays on the page for the whole run instead of vanishing until it ends.
     with analysis_area:
+        clarity_event("analysis_started")  # analytics funnel step 2
         # Fast path by default: BlazePose only, through the shipped
         # FiLM CNN (ONNX). RTMPose + the classical contact-detection pipeline
         # only run later, on request, via results.py's "Run Full Analysis".

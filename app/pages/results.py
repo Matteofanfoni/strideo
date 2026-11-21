@@ -31,6 +31,7 @@ from utils.elite_reference import (  # noqa: E402
     get_elite_ranges,
 )
 from pipeline_runner import engine_auto_enabled  # noqa: E402
+from utils.clarity import clarity_event  # noqa: E402
 from utils.engine_results import (  # noqa: E402
     ENGINE_POLL_S,
     ENGINE_TOO_SLOW_MESSAGE,
@@ -743,6 +744,9 @@ render_navbar("Results")
 
 if st.session_state.pop("scroll_results_top", False):
     scroll_to_top()
+    # Analytics funnel step 3: the one-shot flag is set only when an analysis
+    # has just finished and Upload switched here, never on a revisit.
+    clarity_event("results_shown")
 
 
 # ─────────────────────────────────────────────────────────────

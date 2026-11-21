@@ -1287,6 +1287,16 @@ def render_footer() -> None:
         legal_cols = st.columns(len(_FOOTER_LEGAL_ITEMS), gap="small")
         for col, (label, page) in zip(legal_cols, _FOOTER_LEGAL_ITEMS):
             col.page_link(page, label=label)
+        from utils.clarity import PREFERENCES_HREF, clarity_enabled
+
+        if clarity_enabled():
+            # Handled in the browser by the consent script Clarity's
+            # injection adds (utils/clarity.py): it reopens the choice.
+            st.markdown(
+                f'<a class="footer-meta-line" href="{PREFERENCES_HREF}">'
+                "Analytics preferences</a>",
+                unsafe_allow_html=True,
+            )
 
 
 def render_legal_document(html_text: str) -> None:
